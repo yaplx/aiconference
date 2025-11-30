@@ -1,76 +1,151 @@
-import fitz  # PyMuPDF for PDF extraction
+import streamlit as st
+import fitz  # PyMuPDF
+import os
 from openai import OpenAI
+from dotenv import load_dotenv
 
-# Initialize OpenAI client
-client = OpenAI(api_key="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")
+# === 1. SETUP & AUTHENTICATION ===
 
-# Step 1: Extract text from PDF
-def extract_text_from_pdf(pdf_path):
-    doc = fitz.open(pdf_path)
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    doc.close()
-    return text
+# Try to load environment variables from a local .env file
+load_dotenv()
 
-# Step 2: (Optional) Split text into sections (simple version using keywords)
+# Logic to find the API Key safely (Dual Mode: Cloud vs. Local)
+api_key = None
+
+if "OPENAI_API_KEY" in st.secrets:
+    # Option A: We are running on Streamlit Cloud
+    api_key = st.secrets["OPENAI_API_KEY"]
+elif os.getenv("OPENAI_API_KEY"):
+    # Option B: We are running locally on your laptop
+    api_key = os.getenv("OPENAI_API_KEY")
+
+# Stop the app if no key is found
+if not api_key:
+    st.error("🚨 API Key not found! Please set it in .env (for local) or Streamlit Secrets (for cloud).")
+    st.stop()
+
+# Initialize OpenAI Client
+client = OpenAI(api_key=api_key)
+
+
+# === 2. HELPER FUNCTIONS ===
+
+def extract_text_from_pdf_stream(uploaded_file):
+    """
+    Extracts text directly from the uploaded memory stream.
+    No need to save the file to disk first.
+    """
+    try:
+        # Read the file stream as bytes
+        file_bytes = uploaded_file.read()
+        # Open with PyMuPDF
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        doc.close()
+        return text
+    except Exception as e:
+        st.error(f"Error reading PDF: {e}")
+        return ""
+
+
 def split_into_sections(text):
+    """
+    Splits the full text into logical sections based on keywords.
+    """
     sections = {}
     keywords = ["Abstract", "Introduction", "Method", "Results", "Conclusion", "References"]
 
+    # Case-insensitive search
+    text_lower = text.lower()
+
     for i, keyword in enumerate(keywords):
-        start = text.find(keyword)
+        start = text_lower.find(keyword.lower())
         if start != -1:
-            end = text.find(keywords[i + 1], start) if i + 1 < len(keywords) else len(text)
-            sections[keyword] = text[start:end].strip()
+            # Determine end index: either the next keyword or end of text
+            if i + 1 < len(keywords):
+                next_keyword = keywords[i + 1]
+                end = text_lower.find(next_keyword.lower(), start)
+                if end == -1: end = len(text)
+            else:
+                end = len(text)
+
+            # Extract the actual text (using original case)
+            content = text[start:end].strip()
+            # Clean up the header itself from the text if needed
+            sections[keyword] = content
 
     return sections
 
-# Step 3: Build prompt for LLM
-def build_prompt(section_name, section_text):
-    return f"""
-You are an IEEE conference reviewer assistant. 
-Read the following {section_name} section and suggest 3–5 specific improvements 
-to clarity, completeness, formatting, or scientific quality. 
-Do not invent data or results. 
-Section text:
-{section_text[:2000]}  # limit tokens for safety
-"""
 
-# Step 4: Query LLM
-def query_llm(prompt):
-    response = client.chat.completions.create(
-        model="gpt-5",  # or another model
-        messages=[{"role": "user", "content": prompt}],
-        # max_tokens=50
-    )
-    return response.choices[0].message["content"]
+def generate_section_review(section_name, section_text):
+    """
+    Sends a specific section to the LLM for review.
+    """
+    prompt = f"""
+    You are an IEEE conference reviewer assistant. 
+    Review the following '{section_name}' section.
+    Suggest 3 specific improvements regarding clarity, scientific rigor, or formatting.
 
-# Step 5: Generate improvement report
-def generate_report(sections):
-    report = "=== AI-Powered Paper Improvement Report ===\n\n"
-    for name, text in sections.items():
-        prompt = build_prompt(name, text)
-        suggestions = query_llm(prompt)
-        report += f"\n## {name} Section Improvements:\n"
-        report += suggestions + "\n"
-    return report
+    Section Content:
+    {section_text[:3000]}  # Truncated to avoid token limits
+    """
 
-# Step 6: Save report as text file (later PDF possible)
-def save_report(report, filename="improvement_report.txt"):
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(report)
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",  # Use "gpt-3.5-turbo" if you want to save cost
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"⚠️ Error querying AI: {str(e)}"
 
-# === Main Program ===
-if __name__ == "__main__":
-    pdf_path = "An_Example_Conference_Paper.pdf"   # Replace with uploaded paper
-    paper_text = extract_text_from_pdf(pdf_path)
-    sections = split_into_sections(paper_text)
 
-    if not sections:
-        sections = {"Full Paper": paper_text}  # fallback if no split
+# === 3. MAIN USER INTERFACE ===
 
-    report = generate_report(sections)
-    save_report(report)
+st.set_page_config(page_title="FYP Paper Reviewer", page_icon="📄")
 
-    print("Improvement report generated successfully!")
+st.title("📄 AI Conference Paper Reviewer")
+st.markdown("""
+**Upload your conference paper (PDF)**. 
+The AI will split it into sections (Abstract, Intro, etc.) and give specific feedback for each.
+""")
+
+# File Uploader
+uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
+
+if uploaded_file is not None:
+    # "Analyze" Button
+    if st.button("Analyze Paper"):
+
+        with st.spinner("Processing PDF..."):
+            # 1. Extract Text
+            full_text = extract_text_from_pdf_stream(uploaded_file)
+
+            if not full_text:
+                st.error("Could not extract text. Is this a scanned PDF?")
+                st.stop()
+
+            # 2. Split Sections
+            sections = split_into_sections(full_text)
+
+            # Fallback if splitting fails
+            if not sections:
+                st.warning("⚠️ Could not detect standard sections (Abstract, Intro...). Analyzing full text.")
+                sections = {"Full Document": full_text}
+
+        # 3. Analyze & Display Results
+        progress_bar = st.progress(0)
+        total = len(sections)
+
+        for i, (name, content) in enumerate(sections.items()):
+            # Update Progress
+            progress_bar.progress((i + 1) / total)
+
+            with st.expander(f"🔍 Review: {name}", expanded=True):
+                st.info(f"Analyzing {len(content)} characters...")
+                feedback = generate_section_review(name, content)
+                st.markdown(feedback)
+
+        st.success("✅ Review Complete!")
