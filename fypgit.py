@@ -6,39 +6,63 @@ from dotenv import load_dotenv
 
 # === 1. SETUP & AUTHENTICATION ===
 
+st.set_page_config(page_title="FYP Paper Reviewer", page_icon="🔒")
+
 # Try to load environment variables from a local .env file
 load_dotenv()
 
+
+# --- PASSWORD PROTECTION START ---
+def check_password():
+    """Returns `True` if the user had the correct password."""
+
+    # 1. Get the secret password from Streamlit Secrets or Local .env
+    if "APP_PASSWORD" in st.secrets:
+        secret_password = st.secrets["APP_PASSWORD"]
+    elif os.getenv("APP_PASSWORD"):
+        secret_password = os.getenv("APP_PASSWORD")
+    else:
+        # If no password is set in secrets, allow access (or you can set to fail)
+        return True
+
+    # 2. Show input box
+    user_input = st.text_input("🔑 Enter Access Password", type="password")
+
+    if user_input == secret_password:
+        return True
+    elif user_input == "":
+        st.warning("Please enter the password to continue.")
+        return False
+    else:
+        st.error("❌ Incorrect password")
+        return False
+
+
+# Stop the app here if password is wrong
+if not check_password():
+    st.stop()
+# --- PASSWORD PROTECTION END ---
+
+
 # Logic to find the API Key safely (Dual Mode: Cloud vs. Local)
 api_key = None
-
 if "OPENAI_API_KEY" in st.secrets:
-    # Option A: We are running on Streamlit Cloud
     api_key = st.secrets["OPENAI_API_KEY"]
 elif os.getenv("OPENAI_API_KEY"):
-    # Option B: We are running locally on your laptop
     api_key = os.getenv("OPENAI_API_KEY")
 
-# Stop the app if no key is found
 if not api_key:
     st.error("🚨 API Key not found! Please set it in .env (for local) or Streamlit Secrets (for cloud).")
     st.stop()
 
-# Initialize OpenAI Client
 client = OpenAI(api_key=api_key)
 
 
 # === 2. HELPER FUNCTIONS ===
 
 def extract_text_from_pdf_stream(uploaded_file):
-    """
-    Extracts text directly from the uploaded memory stream.
-    No need to save the file to disk first.
-    """
     try:
-        # Read the file stream as bytes
         file_bytes = uploaded_file.read()
-        # Open with PyMuPDF
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         text = ""
         for page in doc:
@@ -51,49 +75,34 @@ def extract_text_from_pdf_stream(uploaded_file):
 
 
 def split_into_sections(text):
-    """
-    Splits the full text into logical sections based on keywords.
-    """
     sections = {}
     keywords = ["Abstract", "Introduction", "Method", "Results", "Conclusion", "References"]
-
-    # Case-insensitive search
     text_lower = text.lower()
-
     for i, keyword in enumerate(keywords):
         start = text_lower.find(keyword.lower())
         if start != -1:
-            # Determine end index: either the next keyword or end of text
             if i + 1 < len(keywords):
                 next_keyword = keywords[i + 1]
                 end = text_lower.find(next_keyword.lower(), start)
                 if end == -1: end = len(text)
             else:
                 end = len(text)
-
-            # Extract the actual text (using original case)
             content = text[start:end].strip()
             sections[keyword] = content
-
     return sections
 
 
 def generate_section_review(section_name, section_text):
-    """
-    Sends a specific section to the LLM for review.
-    """
     prompt = f"""
     You are an IEEE conference reviewer assistant. 
     Review the following '{section_name}' section.
     Suggest 3 specific improvements regarding clarity, scientific rigor, or formatting.
-
     Section Content:
-    {section_text[:3000]}  # Truncated to avoid token limits
+    {section_text[:3000]}
     """
-
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",  # or gpt-3.5-turbo
+            model="gpt-4o",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
@@ -103,47 +112,29 @@ def generate_section_review(section_name, section_text):
 
 # === 3. MAIN USER INTERFACE ===
 
-st.set_page_config(page_title="FYP Paper Reviewer", page_icon="📄")
-
 st.title("📄 AI Conference Paper Reviewer")
-st.markdown("""
-**Upload your conference paper (PDF)**. 
-The AI will split it into sections (Abstract, Intro, etc.) and give specific feedback for each.
-""")
+st.markdown("Upload your conference paper (PDF) to get specific feedback.")
 
-# File Uploader
 uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
 
 if uploaded_file is not None:
-    # "Analyze" Button
     if st.button("Analyze Paper"):
-
         with st.spinner("Processing PDF..."):
-            # 1. Extract Text
             full_text = extract_text_from_pdf_stream(uploaded_file)
-
             if not full_text:
-                st.error("Could not extract text. Is this a scanned PDF?")
+                st.error("Could not extract text.")
                 st.stop()
 
-            # 2. Split Sections
             sections = split_into_sections(full_text)
-
-            # Fallback if splitting fails
             if not sections:
                 st.warning("⚠️ Could not detect standard sections. Analyzing full text.")
                 sections = {"Full Document": full_text}
 
-        # 3. Analyze & Display Results
         progress_bar = st.progress(0)
         total = len(sections)
-
         for i, (name, content) in enumerate(sections.items()):
-            # Update Progress
             progress_bar.progress((i + 1) / total)
-
             with st.expander(f"🔍 Review: {name}", expanded=True):
-                st.info(f"Analyzing {len(content)} characters...")
                 feedback = generate_section_review(name, content)
                 st.markdown(feedback)
 
