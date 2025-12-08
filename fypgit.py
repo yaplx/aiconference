@@ -88,9 +88,9 @@ def generate_section_review(section_name, section_text):
     prompt = f"""
     You are an IEEE conference reviewer assistant. 
     Review the following '{section_name}' section.
-    Suggest 3 specific improvements regarding clarity, scientific rigor, or formatting.
+    Suggest 3 specific improvements regarding but not limited to clarity, scientific rigor, or formatting.
     Section Content:
-    {section_text[:3000]}
+    {section_text[:15000]}
     """
     try:
         response = client.chat.completions.create(
