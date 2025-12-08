@@ -3,31 +3,25 @@ import fitz  # PyMuPDF
 import os
 from openai import OpenAI
 from dotenv import load_dotenv
+from fpdf import FPDF  # <--- NEW IMPORT
 
 # === 1. SETUP & AUTHENTICATION ===
 
 st.set_page_config(page_title="FYP Paper Reviewer", page_icon="🔒")
 
-# Try to load environment variables from a local .env file
 load_dotenv()
 
 
-# --- PASSWORD PROTECTION START ---
+# --- PASSWORD PROTECTION ---
 def check_password():
-    """Returns `True` if the user had the correct password."""
-
-    # 1. Get the secret password from Streamlit Secrets or Local .env
     if "APP_PASSWORD" in st.secrets:
         secret_password = st.secrets["APP_PASSWORD"]
     elif os.getenv("APP_PASSWORD"):
         secret_password = os.getenv("APP_PASSWORD")
     else:
-        # If no password is set in secrets, allow access (or you can set to fail)
         return True
 
-    # 2. Show input box
     user_input = st.text_input("🔑 Enter Access Password", type="password")
-
     if user_input == secret_password:
         return True
     elif user_input == "":
@@ -38,13 +32,11 @@ def check_password():
         return False
 
 
-# Stop the app here if password is wrong
 if not check_password():
     st.stop()
-# --- PASSWORD PROTECTION END ---
+# ---------------------------
 
-
-# Logic to find the API Key safely (Dual Mode: Cloud vs. Local)
+# API Key Logic
 api_key = None
 if "OPENAI_API_KEY" in st.secrets:
     api_key = st.secrets["OPENAI_API_KEY"]
@@ -52,7 +44,7 @@ elif os.getenv("OPENAI_API_KEY"):
     api_key = os.getenv("OPENAI_API_KEY")
 
 if not api_key:
-    st.error("🚨 API Key not found! Please set it in .env (for local) or Streamlit Secrets (for cloud).")
+    st.error("🚨 API Key not found!")
     st.stop()
 
 client = OpenAI(api_key=api_key)
@@ -110,15 +102,43 @@ def generate_section_review(section_name, section_text):
         return f"⚠️ Error querying AI: {str(e)}"
 
 
+# <--- NEW FUNCTION: CREATE PDF --->
+def create_pdf_report(full_report_text):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+
+    # Title
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, txt="AI Paper Improvement Report", ln=True, align='C')
+    pdf.ln(10)
+
+    # Body
+    pdf.set_font("Arial", size=12)
+
+    # FPDF cannot handle some special characters (emojis/bolding stars), so we replace them
+    safe_text = full_report_text.replace("’", "'").replace("“", '"').replace("”", '"').replace("**", "")
+
+    # Write text (multi_cell handles line breaks)
+    pdf.multi_cell(0, 10, safe_text)
+
+    # Return PDF as bytes
+    return pdf.output(dest="S").encode("latin-1", "replace")
+
+
 # === 3. MAIN USER INTERFACE ===
 
 st.title("📄 AI Conference Paper Reviewer")
-st.markdown("Upload your conference paper (PDF) to get specific feedback.")
+st.markdown("Upload your conference paper (PDF) to get feedback.")
 
 uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
 
 if uploaded_file is not None:
     if st.button("Analyze Paper"):
+
+        # Variables to store the final report
+        full_report_string = ""
+
         with st.spinner("Processing PDF..."):
             full_text = extract_text_from_pdf_stream(uploaded_file)
             if not full_text:
@@ -127,15 +147,35 @@ if uploaded_file is not None:
 
             sections = split_into_sections(full_text)
             if not sections:
-                st.warning("⚠️ Could not detect standard sections. Analyzing full text.")
+                st.warning("⚠️ No sections detected. Analyzing full text.")
                 sections = {"Full Document": full_text}
 
         progress_bar = st.progress(0)
         total = len(sections)
+
         for i, (name, content) in enumerate(sections.items()):
             progress_bar.progress((i + 1) / total)
+
             with st.expander(f"🔍 Review: {name}", expanded=True):
                 feedback = generate_section_review(name, content)
                 st.markdown(feedback)
 
+                # Append to our report string for the PDF
+                full_report_string += f"\n\n--- SECTION: {name} ---\n"
+                full_report_string += feedback
+
         st.success("✅ Review Complete!")
+
+        # <--- NEW: DOWNLOAD BUTTON --->
+        st.write("---")
+        st.subheader("📥 Download Report")
+
+        # Generate the PDF bytes
+        pdf_bytes = create_pdf_report(full_report_string)
+
+        st.download_button(
+            label="Download Report as PDF",
+            data=pdf_bytes,
+            file_name="paper_review_report.pdf",
+            mime="application/pdf"
+        )
