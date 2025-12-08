@@ -103,6 +103,7 @@ def generate_section_review(section_name, section_text):
 
 
 # <--- NEW FUNCTION: CREATE PDF --->
+# <--- UPDATED FUNCTION: CREATE PDF (Crash-Proof Version) --->
 def create_pdf_report(full_report_text):
     pdf = FPDF()
     pdf.add_page()
@@ -116,10 +117,13 @@ def create_pdf_report(full_report_text):
     # Body
     pdf.set_font("Arial", size=12)
 
-    # FPDF cannot handle some special characters (emojis/bolding stars), so we replace them
-    safe_text = full_report_text.replace("’", "'").replace("“", '"').replace("”", '"').replace("**", "")
+    # === THE FIX IS HERE ===
+    # This line forces the text to be Latin-1 compatible.
+    # It replaces any "fancy" characters (emojis, chinese chars, smart quotes) with a '?'
+    # so the PDF generator doesn't crash.
+    safe_text = full_report_text.encode('latin-1', 'replace').decode('latin-1')
 
-    # Write text (multi_cell handles line breaks)
+    # Write text
     pdf.multi_cell(0, 10, safe_text)
 
     # Return PDF as bytes
