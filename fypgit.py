@@ -140,7 +140,6 @@ uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
 if uploaded_file is not None:
     if st.button("Analyze Paper"):
 
-        # Variables to store the final report
         full_report_string = ""
 
         with st.spinner("Processing PDF..."):
@@ -164,22 +163,28 @@ if uploaded_file is not None:
                 feedback = generate_section_review(name, content)
                 st.markdown(feedback)
 
-                # Append to our report string for the PDF
+                # Append to our report string
                 full_report_string += f"\n\n--- SECTION: {name} ---\n"
                 full_report_string += feedback
 
         st.success("✅ Review Complete!")
 
-        # <--- NEW: DOWNLOAD BUTTON --->
+        # <--- NEW: DYNAMIC FILENAME LOGIC --->
         st.write("---")
         st.subheader("📥 Download Report")
 
-        # Generate the PDF bytes
+        # 1. Generate the PDF bytes
         pdf_bytes = create_pdf_report(full_report_string)
 
+        # 2. Create the new filename
+        # Example: "My_Paper.pdf" -> "My_Paper_peer_review_report.pdf"
+        original_name = uploaded_file.name.replace(".pdf", "")
+        new_filename = f"{original_name}_peer_review_report.pdf"
+
+        # 3. Create the button with the new filename
         st.download_button(
             label="Download Report as PDF",
             data=pdf_bytes,
-            file_name="paper_review_report.pdf",
+            file_name=new_filename,
             mime="application/pdf"
         )
