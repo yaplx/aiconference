@@ -32,7 +32,6 @@ def extract_text_from_pdf_stream(uploaded_file):
 
     # --- 3. HYBRID PARSING LOGIC ---
 
-
 def _is_level_1_numbering(line):
     # Matches "1. Title" or "IV. Title", ignores "1.1"
     arabic = r"^\d+\.\s+[A-Z]"
@@ -128,6 +127,7 @@ def generate_section_review(client, section_name, section_text, paper_title="Unt
         1. Plain Text only (no Markdown).
         2. Use Math symbols freely (θ, π, ->).
         3. Professional tone.
+        4. Do not modify any data.
 
         ### OBJECTIVES
         1. Relevance.

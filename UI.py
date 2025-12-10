@@ -3,8 +3,6 @@ import os
 import zipfile
 import io
 from dotenv import load_dotenv
-
-# Import our custom backend logic
 import backend
 
 # === 1. PAGE CONFIG & AUTHENTICATION ===
@@ -38,7 +36,6 @@ def check_password():
         st.error("❌ Incorrect password")
         return False
 
-
 if not check_password():
     st.stop()
 
@@ -62,7 +59,6 @@ st.title("📄 AI Conference Paper Reviewer")
 st.markdown("Upload **one or more** conference papers (PDF).")
 
 # 1. DISABLE WIDGETS IF PROCESSING
-# We use the 'disabled' argument based on our state variable
 is_locked = st.session_state.processing
 
 uploaded_files = st.file_uploader(
