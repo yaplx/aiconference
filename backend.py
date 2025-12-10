@@ -21,7 +21,6 @@ def extract_text_from_pdf_stream(uploaded_file):
             text = page.get_text("text")
             raw_lines = text.split('\n')
             for line in raw_lines:
-                # Remove tags if they exist
                 clean = re.sub(r"^\\s*", "", line.strip())
                 if clean:
                     all_lines.append(clean)
@@ -31,50 +30,30 @@ def extract_text_from_pdf_stream(uploaded_file):
     except Exception as e:
         return []
 
-    # --- 3. HYBRID PARSING LOGIC (Keywords + Numbers) ---
+    # --- 3. HYBRID PARSING LOGIC ---
 
 
 def _is_level_1_numbering(line):
-    """
-    Checks if line matches "1. Title" or "IV. Title".
-    Strictly ignores subsections like "1.1" or "IV.A".
-    """
-    # Arabic Pattern: Start -> Digits -> Dot -> Space -> Capital Letter
-    # Rejects "1.1" because after the dot is another digit, not space.
+    # Matches "1. Title" or "IV. Title", ignores "1.1"
     arabic = r"^\d+\.\s+[A-Z]"
-
-    # Roman Pattern: Start -> Roman -> Dot -> Space -> Capital Letter
     roman = r"^(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})\.\s+[A-Z]"
-
     if re.match(arabic, line) or re.match(roman, line):
         return True
     return False
 
 
 def split_into_sections(text_lines):
-    # 1. Standard Keywords Map
     HEADER_MAP = {
         "ABSTRACT": "ABSTRACT",
         "INTRODUCTION": "INTRODUCTION",
-        "RELATED WORK": "RELATED WORK",
-        "LITERATURE REVIEW": "RELATED WORK",
-        "BACKGROUND": "RELATED WORK",
-        "METHOD": "METHODOLOGY",
-        "METHODS": "METHODOLOGY",
-        "METHODOLOGY": "METHODOLOGY",
-        "PROPOSED METHOD": "METHODOLOGY",
-        "APPROACH": "METHODOLOGY",
-        "EXPERIMENT": "EXPERIMENTS",
-        "EXPERIMENTS": "EXPERIMENTS",
-        "EVALUATION": "EXPERIMENTS",
-        "RESULT": "RESULTS",
-        "RESULTS": "RESULTS",
+        "RELATED WORK": "RELATED WORK", "LITERATURE REVIEW": "RELATED WORK", "BACKGROUND": "RELATED WORK",
+        "METHOD": "METHODOLOGY", "METHODS": "METHODOLOGY", "METHODOLOGY": "METHODOLOGY",
+        "PROPOSED METHOD": "METHODOLOGY", "APPROACH": "METHODOLOGY",
+        "EXPERIMENT": "EXPERIMENTS", "EXPERIMENTS": "EXPERIMENTS", "EVALUATION": "EXPERIMENTS",
+        "RESULT": "RESULTS", "RESULTS": "RESULTS",
         "DISCUSSION": "DISCUSSION",
-        "CONCLUSION": "CONCLUSION",
-        "CONCLUSIONS": "CONCLUSION",
-        "FUTURE WORK": "CONCLUSION"
+        "CONCLUSION": "CONCLUSION", "CONCLUSIONS": "CONCLUSION", "FUTURE WORK": "CONCLUSION"
     }
-
     STOP_KEYWORDS = ["REFERENCES", "BIBLIOGRAPHY", "APPENDIX", "APPENDICES", "ACKNOWLEDGEMENT"]
 
     sections = {}
@@ -85,8 +64,6 @@ def split_into_sections(text_lines):
         clean_line = line.strip()
         upper_line = clean_line.upper()
 
-        # --- A. CHECK STOP KEYWORDS ---
-        # Strip numbers to check strictly for "REFERENCES"
         clean_upper_no_num = re.sub(r"^[\d\.IVXivx]+\s+", "", upper_line).strip()
 
         is_stop = False
@@ -96,25 +73,18 @@ def split_into_sections(text_lines):
                 break
         if is_stop: break
 
-        # --- B. DETECTION LOGIC ---
         is_new_header = False
         final_header_name = ""
 
-        # Method 1: Keyword Match (Strongest)
-        # We use the version STRIPPED of numbers to match "Introduction"
+        # Method 1: Keyword Match
         if clean_upper_no_num in HEADER_MAP:
             final_header_name = HEADER_MAP[clean_upper_no_num]
             is_new_header = True
-
-        # Method 2: Numbering Match (Fallback for unique headers)
-        # Only check this if Method 1 failed.
-        # We check the ORIGINAL line for "3. My Custom Algo"
+        # Method 2: Numbering Match
         elif _is_level_1_numbering(clean_line):
-            # We use the full line as the title (e.g., "3. PROPOSED FRAMEWORK")
             final_header_name = clean_line
             is_new_header = True
 
-        # --- C. SAVE SECTION ---
         if is_new_header:
             current_header = final_header_name
             if current_header not in sections:
@@ -132,8 +102,7 @@ def split_into_sections(text_lines):
 # --- 4. AI REVIEW GENERATION ---
 def generate_section_review(client, section_name, section_text, paper_title="Untitled Paper"):
     special_focus = ""
-    # Add focus for Methodology since custom headers usually fall here
-    if "METHOD" in section_name.upper() or "PROPOSED" in section_name.upper():
+    if "METHOD" in section_name.upper():
         special_focus = "Focus on: technical depth, clarity, and reproducibility."
     elif "RESULT" in section_name.upper():
         special_focus = "Focus on: Are results significant? Do they prove the method works?"
@@ -163,7 +132,7 @@ def generate_section_review(client, section_name, section_text, paper_title="Unt
         """
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
@@ -171,25 +140,50 @@ def generate_section_review(client, section_name, section_text, paper_title="Unt
         return f"Error querying AI: {str(e)}"
 
 
-# --- 5. PDF REPORT GENERATION ---
+# --- 5. PDF REPORT GENERATION (UPDATED WITH DISCLAIMER) ---
 def create_pdf_report(full_report_text):
     pdf = FPDF()
     pdf.add_page()
 
-    # UPDATE PATH IF NEEDED
+    # Path setup
     font_path = os.path.join("dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
+
+    # Default fallback font
+    font_family = "Arial"
 
     if os.path.exists(font_path):
         pdf.add_font('DejaVu', '', font_path, uni=True)
-        pdf.set_font('DejaVu', '', 12)
-        pdf.set_font('DejaVu', '', 16)
-        pdf.cell(200, 10, txt="AI Paper Improvement Report", ln=True, align='C')
-        pdf.ln(10)
-        pdf.set_font('DejaVu', '', 12)
+        font_family = 'DejaVu'
+
+    # --- TITLE ---
+    pdf.set_font(font_family, '', 16)
+    pdf.cell(0, 10, txt="AI Paper Improvement Report", ln=True, align='C')
+    pdf.ln(3)
+
+    # --- DISCLAIMER SECTION (New) ---
+    pdf.set_font(font_family, '', 9)  # Smaller font for disclaimer
+    pdf.set_text_color(100, 100, 100)  # Grey color to make it distinct
+
+    disclaimer_text = (
+        "DISCLAIMER: This report relies on common academic header recognition. "
+        "If your paper uses non-standard or unique headers that are not recognized, "
+        "the review for that specific section might be skipped as a standalone item. "
+        "However, the content is not lost; it is automatically merged into the previous section "
+        "and reviewed within that context."
+    )
+
+    pdf.multi_cell(0, 5, txt=disclaimer_text, align='C')
+    pdf.ln(10)  # Add space after disclaimer
+
+    # --- MAIN CONTENT ---
+    pdf.set_text_color(0, 0, 0)  # Reset to Black
+    pdf.set_font(font_family, '', 12)
+
+    if font_family == 'DejaVu':
         pdf.multi_cell(0, 10, full_report_text)
         return pdf.output(dest="S").encode("latin-1")
     else:
-        pdf.set_font("Arial", size=12)
+        # Fallback cleaning for Arial
         safe_text = full_report_text.encode('latin-1', 'replace').decode('latin-1')
         pdf.multi_cell(0, 10, safe_text)
         return pdf.output(dest="S").encode("latin-1", "replace")
