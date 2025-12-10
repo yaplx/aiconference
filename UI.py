@@ -12,6 +12,12 @@ import backend
 st.set_page_config(page_title="FYP Paper Reviewer", page_icon="📄")
 load_dotenv()
 
+# Initialize Session State variables if they don't exist
+if "processing" not in st.session_state:
+    st.session_state.processing = False
+if "generated_reports" not in st.session_state:
+    st.session_state.generated_reports = None
+
 
 # --- Password Logic ---
 def check_password():
@@ -55,99 +61,133 @@ client = backend.get_openai_client(api_key)
 st.title("📄 AI Conference Paper Reviewer")
 st.markdown("Upload **one or more** conference papers (PDF).")
 
-uploaded_files = st.file_uploader("Choose PDF file(s)", type="pdf", accept_multiple_files=True)
+# 1. DISABLE WIDGETS IF PROCESSING
+# We use the 'disabled' argument based on our state variable
+is_locked = st.session_state.processing
 
-if uploaded_files:
+uploaded_files = st.file_uploader(
+    "Choose PDF file(s)",
+    type="pdf",
+    accept_multiple_files=True,
+    disabled=is_locked  # <--- Locked if processing
+)
 
-    # CHANGE 1: Checkbox to Toggle Comments
-    show_visuals = st.checkbox("Show detailed feedback on screen", value=True)
+# Checkbox is also locked during processing
+show_visuals = st.checkbox(
+    "Show detailed feedback on screen",
+    value=True,
+    disabled=is_locked  # <--- Locked if processing
+)
 
+# === 3. ANALYSIS LOGIC ===
+
+# If files are uploaded AND we are not currently processing...
+if uploaded_files and not st.session_state.processing:
+    # Show the button
     if st.button(f"Analyze {len(uploaded_files)} Paper(s)"):
+        # LOCK THE UI
+        st.session_state.processing = True
+        st.session_state.generated_reports = None  # Clear old results
+        st.rerun()  # Restart to apply the "disabled" grey-out effect
 
-        main_progress = st.progress(0)
-        generated_reports = []
+# IF WE ARE IN PROCESSING MODE (This runs automatically after the rerun)
+if st.session_state.processing and uploaded_files:
 
-        for file_index, uploaded_file in enumerate(uploaded_files):
+    main_progress = st.progress(0)
+    temp_reports = []
 
-            # Update Progress
-            main_progress.progress(file_index / len(uploaded_files))
+    # Run the Loop
+    for file_index, uploaded_file in enumerate(uploaded_files):
+        main_progress.progress(file_index / len(uploaded_files))
 
-            st.divider()
-            st.subheader(f"📄 Processing: {uploaded_file.name}")
+        st.divider()
+        st.subheader(f"📄 Processing: {uploaded_file.name}")
 
-            current_paper_report = f"REPORT FOR: {uploaded_file.name}\n\n"
+        current_paper_report = f"REPORT FOR: {uploaded_file.name}\n\n"
 
-            with st.spinner(f"Reading {uploaded_file.name}..."):
-                full_text = backend.extract_text_from_pdf_stream(uploaded_file)
-                if not full_text:
-                    st.error(f"Could not extract text from {uploaded_file.name}.")
-                    continue
+        with st.spinner(f"Reading {uploaded_file.name}..."):
+            # UPDATED: backend now returns a LIST of lines, not a single string
+            text_lines = backend.extract_text_from_pdf_stream(uploaded_file)
 
-                sections = backend.split_into_sections(full_text)
-                if not sections:
-                    st.warning(f"⚠️ No sections detected. Analyzing full text.")
-                    sections = {"Full Document": full_text}
+            if not text_lines:
+                st.error(f"Could not extract text from {uploaded_file.name}.")
+                continue
 
-            # CHANGE 2: Only create tabs if the user wants to see them
-            tabs = None
-            if show_visuals:
-                section_names = list(sections.keys())
+            # UPDATED: Pass the list of lines to the new parser
+            sections = backend.split_into_sections(text_lines)
+
+            if not sections:
+                st.warning(f"⚠️ No sections detected. Analyzing full text as one block.")
+                # Fallback: Join the list back into one big string
+                sections = {"Full Document": "\n".join(text_lines)}
+
+        # Create tabs only if requested
+        tabs = None
+        if show_visuals:
+            section_names = list(sections.keys())
+            # Safety check: if too many sections (e.g., bad parse), limit tabs
+            if len(section_names) > 0:
                 tabs = st.tabs(section_names)
 
-            # Analyze Sections
-            for i, (name, content) in enumerate(sections.items()):
+        for i, (name, content) in enumerate(sections.items()):
+            feedback = backend.generate_section_review(client, name, content)
+            current_paper_report += f"\n\n--- SECTION: {name} ---\n"
+            current_paper_report += feedback
 
-                # Logic (Always runs to create the PDF)
-                feedback = backend.generate_section_review(client, name, content)
+            # Optional Visuals
+            if show_visuals and tabs:
+                with tabs[i]:
+                    st.caption(f"Analyzing {name}...")
+                    st.markdown(feedback)
+            elif not show_visuals:
+                # Simple log if visuals are off
+                st.write(f"✅ Analyzed section: {name}")
 
-                # Add to report string (Always runs)
-                current_paper_report += f"\n\n--- SECTION: {name} ---\n"
-                current_paper_report += feedback
+        # Generate PDF
+        pdf_bytes = backend.create_pdf_report(current_paper_report)
+        original_name = uploaded_file.name.replace(".pdf", "")
+        new_filename = f"{original_name}_review.pdf"
+        temp_reports.append((new_filename, pdf_bytes))
 
-                # CHANGE 3: Only display on screen if checkbox is checked
-                if show_visuals and tabs:
-                    with tabs[i]:
-                        st.caption(f"Analyzing {name}...")
-                        st.markdown(feedback)
-                else:
-                    # Minimal feedback if visuals are off
-                    st.write(f"✅ Analyzed section: {name}")
+    main_progress.progress(1.0)
+    st.success("✅ All papers processed!")
 
-            # Generate PDF Bytes
-            pdf_bytes = backend.create_pdf_report(current_paper_report)
+    # SAVE RESULTS TO STATE & UNLOCK
+    st.session_state.generated_reports = temp_reports
+    st.session_state.processing = False
+    st.rerun()  # Restart to unlock the UI and show download buttons
 
-            original_name = uploaded_file.name.replace(".pdf", "")
-            new_filename = f"{original_name}_review.pdf"
+# === 4. DOWNLOAD SECTION (PERSISTENT) ===
+# This part runs even after the app refreshes/unlocks
+if st.session_state.generated_reports:
+    st.write("---")
+    st.subheader("📥 Download Results")
 
-            generated_reports.append((new_filename, pdf_bytes))
+    reports = st.session_state.generated_reports
 
-        main_progress.progress(1.0)
-        st.success("✅ All papers processed!")
+    if len(reports) == 1:
+        single_filename, single_bytes = reports[0]
+        st.download_button(
+            label=f"Download Report ({single_filename})",
+            data=single_bytes,
+            file_name=single_filename,
+            mime="application/pdf"
+        )
+    else:
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            for file_name, file_data in reports:
+                zf.writestr(file_name, file_data)
 
-        # === DOWNLOAD LOGIC ===
-        if generated_reports:
-            st.write("---")
-            st.subheader("📥 Download Results")
+        zip_buffer.seek(0)
+        st.download_button(
+            label=f"📦 Download All {len(reports)} Reports (ZIP)",
+            data=zip_buffer,
+            file_name="All_Reviews.zip",
+            mime="application/zip"
+        )
 
-            if len(generated_reports) == 1:
-                single_filename, single_bytes = generated_reports[0]
-                st.download_button(
-                    label=f"Download Report ({single_filename})",
-                    data=single_bytes,
-                    file_name=single_filename,
-                    mime="application/pdf"
-                )
-            else:
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, "w") as zf:
-                    for file_name, file_data in generated_reports:
-                        zf.writestr(file_name, file_data)
-
-                zip_buffer.seek(0)
-
-                st.download_button(
-                    label=f"📦 Download All {len(generated_reports)} Reports (ZIP)",
-                    data=zip_buffer,
-                    file_name="All_Reviews.zip",
-                    mime="application/zip"
-                )
+    # Optional: Button to clear results and start over
+    if st.button("Start New Review"):
+        st.session_state.generated_reports = None
+        st.rerun()

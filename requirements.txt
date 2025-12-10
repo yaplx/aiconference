@@ -3,3 +3,4 @@ openai
 pymupdf
 python-dotenv
 fpdf
+pdfplumber
