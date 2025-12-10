@@ -10,7 +10,7 @@ def get_openai_client(api_key):
     return OpenAI(api_key=api_key)
 
 
-# --- 2. TEXT EXTRACTION (Updated to return clean lines) ---
+# --- 2. TEXT EXTRACTION ---
 def extract_text_from_pdf_stream(uploaded_file):
     try:
         file_bytes = uploaded_file.read()
@@ -18,13 +18,11 @@ def extract_text_from_pdf_stream(uploaded_file):
 
         all_lines = []
         for page in doc:
-            # "text" mode is standard; "blocks" can sometimes help but complicates order.
             text = page.get_text("text")
-
-            # Split and clean basic whitespace
             raw_lines = text.split('\n')
             for line in raw_lines:
-                clean = line.strip()
+                # Remove tags if they exist
+                clean = re.sub(r"^\\s*", "", line.strip())
                 if clean:
                     all_lines.append(clean)
 
@@ -33,111 +31,97 @@ def extract_text_from_pdf_stream(uploaded_file):
     except Exception as e:
         return []
 
-    # --- 3. SMART PARSING LOGIC (Fixed for Split Headers) ---
+    # --- 3. HYBRID PARSING LOGIC (Keywords + Numbers) ---
 
 
-def _is_standalone_header_number(line):
-    """Checks if a line is just a number like '1' or 'IV' or '2.'"""
-    # Matches "1", "1.", "IV", "IV."
-    return re.match(r"^(\d+|[IVX]+)\.?$", line.strip()) is not None
-
-
-def _is_potential_title_text(line):
-    """Checks if a line looks like a title (mostly uppercase or Title Case)."""
-    # Reject long sentences
-    if len(line) > 80:
-        return False
-    # Check for All Caps (common in headers) or Title Case
-    # We require at least one uppercase letter to avoid matching "1. a small point"
-    return re.search(r"[A-Z]", line) is not None
-
-
-def _is_level_1_header(line):
+def _is_level_1_numbering(line):
     """
-    Checks for standard single-line headers.
-    Matches: "1. Introduction", "1 Introduction", "IV. Method", "ABSTRACT"
+    Checks if line matches "1. Title" or "IV. Title".
+    Strictly ignores subsections like "1.1" or "IV.A".
     """
-    clean_line = line.strip()
-    if len(clean_line) > 100: return False
+    # Arabic Pattern: Start -> Digits -> Dot -> Space -> Capital Letter
+    # Rejects "1.1" because after the dot is another digit, not space.
+    arabic = r"^\d+\.\s+[A-Z]"
 
-    # 1. Standard Numbered Pattern (e.g., "1. Introduction", "IV Method")
-    # Digits/Roman -> Optional Dot -> Space -> Capital Letter
-    numeric_pattern = r"^(\d+|(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3}))\.?\s+[A-Z]"
+    # Roman Pattern: Start -> Roman -> Dot -> Space -> Capital Letter
+    roman = r"^(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})\.\s+[A-Z]"
 
-    # 2. Key Section Names (Fallback for unnumbered Abstract/Intro)
-    # We accept these even without numbers
-    keywords = ["ABSTRACT", "INTRODUCTION", "RELATED WORK", "METHOD", "EXPERIMENTS", "CONCLUSION"]
-    upper_line = clean_line.upper()
-
-    # Strict match for keywords (must be at START of line)
-    for kw in keywords:
-        # Matches "ABSTRACT" or "1. ABSTRACT" or "I. ABSTRACT"
-        if upper_line.startswith(kw) or (len(upper_line.split()) < 4 and kw in upper_line):
-            return True
-
-    if re.match(numeric_pattern, clean_line):
+    if re.match(arabic, line) or re.match(roman, line):
         return True
-
     return False
 
 
 def split_into_sections(text_lines):
+    # 1. Standard Keywords Map
+    HEADER_MAP = {
+        "ABSTRACT": "ABSTRACT",
+        "INTRODUCTION": "INTRODUCTION",
+        "RELATED WORK": "RELATED WORK",
+        "LITERATURE REVIEW": "RELATED WORK",
+        "BACKGROUND": "RELATED WORK",
+        "METHOD": "METHODOLOGY",
+        "METHODS": "METHODOLOGY",
+        "METHODOLOGY": "METHODOLOGY",
+        "PROPOSED METHOD": "METHODOLOGY",
+        "APPROACH": "METHODOLOGY",
+        "EXPERIMENT": "EXPERIMENTS",
+        "EXPERIMENTS": "EXPERIMENTS",
+        "EVALUATION": "EXPERIMENTS",
+        "RESULT": "RESULTS",
+        "RESULTS": "RESULTS",
+        "DISCUSSION": "DISCUSSION",
+        "CONCLUSION": "CONCLUSION",
+        "CONCLUSIONS": "CONCLUSION",
+        "FUTURE WORK": "CONCLUSION"
+    }
+
     STOP_KEYWORDS = ["REFERENCES", "BIBLIOGRAPHY", "APPENDIX", "APPENDICES", "ACKNOWLEDGEMENT"]
+
     sections = {}
     current_header = "PREAMBLE"
     sections[current_header] = []
 
-    i = 0
-    while i < len(text_lines):
-        line = text_lines[i].strip()
+    for line in text_lines:
+        clean_line = line.strip()
+        upper_line = clean_line.upper()
 
-        # --- A. CLEAN NOISE ---
-        # If your input literally has "", remove it.
-        # This regex removes tags from the start of the line
-        line = re.sub(r"^\\s*", "", line)
+        # --- A. CHECK STOP KEYWORDS ---
+        # Strip numbers to check strictly for "REFERENCES"
+        clean_upper_no_num = re.sub(r"^[\d\.IVXivx]+\s+", "", upper_line).strip()
 
-        if not line:
-            i += 1
-            continue
-
-        # --- B. CHECK STOP KEYWORDS ---
-        upper_line = line.upper().replace('.', '')
-        is_stop_word = False
-        for keyword in STOP_KEYWORDS:
-            if keyword in upper_line and len(upper_line) < len(keyword) + 10:
-                is_stop_word = True
+        is_stop = False
+        for stop_word in STOP_KEYWORDS:
+            if clean_upper_no_num.startswith(stop_word):
+                is_stop = True
                 break
-        if is_stop_word:
-            break
+        if is_stop: break
 
-            # --- C. DETECT HEADERS (Split or Single) ---
+        # --- B. DETECTION LOGIC ---
         is_new_header = False
-        header_title = ""
+        final_header_name = ""
 
-        # Case 1: Split Header (Line i is "1", Line i+1 is "INTRODUCTION")
-        if i + 1 < len(text_lines):
-            next_line = re.sub(r"^\\s*", "", text_lines[i + 1].strip())
-
-            if _is_standalone_header_number(line) and _is_potential_title_text(next_line):
-                header_title = f"{line} {next_line}"  # Merge them
-                is_new_header = True
-                i += 1  # Skip the next line since we consumed it
-
-        # Case 2: Standard Single Line Header
-        if not is_new_header and _is_level_1_header(line):
-            header_title = line
+        # Method 1: Keyword Match (Strongest)
+        # We use the version STRIPPED of numbers to match "Introduction"
+        if clean_upper_no_num in HEADER_MAP:
+            final_header_name = HEADER_MAP[clean_upper_no_num]
             is_new_header = True
 
-        # --- D. SAVE SECTION ---
+        # Method 2: Numbering Match (Fallback for unique headers)
+        # Only check this if Method 1 failed.
+        # We check the ORIGINAL line for "3. My Custom Algo"
+        elif _is_level_1_numbering(clean_line):
+            # We use the full line as the title (e.g., "3. PROPOSED FRAMEWORK")
+            final_header_name = clean_line
+            is_new_header = True
+
+        # --- C. SAVE SECTION ---
         if is_new_header:
-            current_header = header_title
-            sections[current_header] = []
+            current_header = final_header_name
+            if current_header not in sections:
+                sections[current_header] = []
         else:
-            sections[current_header].append(line)
+            sections[current_header].append(clean_line)
 
-        i += 1
-
-    # Remove Preamble
     if "PREAMBLE" in sections:
         del sections["PREAMBLE"]
 
@@ -145,13 +129,16 @@ def split_into_sections(text_lines):
     return final_output
 
 
-# --- 4. AI REVIEW GENERATION (With Title) ---
+# --- 4. AI REVIEW GENERATION ---
 def generate_section_review(client, section_name, section_text, paper_title="Untitled Paper"):
     special_focus = ""
-    if "result" in section_name.lower():
-        special_focus = "Since this is RESULTS, focus on significance and proof of method."
-    elif "intro" in section_name.lower():
-        special_focus = "Focus on problem definition and novelty."
+    # Add focus for Methodology since custom headers usually fall here
+    if "METHOD" in section_name.upper() or "PROPOSED" in section_name.upper():
+        special_focus = "Focus on: technical depth, clarity, and reproducibility."
+    elif "RESULT" in section_name.upper():
+        special_focus = "Focus on: Are results significant? Do they prove the method works?"
+    elif "INTRO" in section_name.upper():
+        special_focus = "Focus on: Is the problem clearly defined? Is the novelty explicitly stated?"
 
     prompt = f"""
         You are a strict IEEE conference reviewer.
@@ -159,14 +146,14 @@ def generate_section_review(client, section_name, section_text, paper_title="Unt
         Current Section: '{section_name}'
 
         ### FORMATTING RULES
-        1. No Markdown (**bold**). 
-        2. Use math symbols freely (θ, π).
+        1. Plain Text only (no Markdown).
+        2. Use Math symbols freely (θ, π, ->).
         3. Professional tone.
 
         ### OBJECTIVES
         1. Relevance.
         2. Novelty.
-        3. Rigor.
+        3. Scientific Rigor.
 
         {special_focus}
         Provide 3-5 actionable improvements based ONLY on the text below.
@@ -184,12 +171,12 @@ def generate_section_review(client, section_name, section_text, paper_title="Unt
         return f"Error querying AI: {str(e)}"
 
 
-# --- 5. PDF REPORT (Font Support) ---
+# --- 5. PDF REPORT GENERATION ---
 def create_pdf_report(full_report_text):
     pdf = FPDF()
     pdf.add_page()
 
-    # Path to font - UPDATE THIS if needed
+    # UPDATE PATH IF NEEDED
     font_path = os.path.join("dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
 
     if os.path.exists(font_path):
@@ -202,7 +189,6 @@ def create_pdf_report(full_report_text):
         pdf.multi_cell(0, 10, full_report_text)
         return pdf.output(dest="S").encode("latin-1")
     else:
-        # Fallback
         pdf.set_font("Arial", size=12)
         safe_text = full_report_text.encode('latin-1', 'replace').decode('latin-1')
         pdf.multi_cell(0, 10, safe_text)
