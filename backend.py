@@ -1,5 +1,6 @@
 import fitz  # PyMuPDF
 import re
+import os
 from openai import OpenAI
 from fpdf import FPDF
 
@@ -9,48 +10,30 @@ def get_openai_client(api_key):
     return OpenAI(api_key=api_key)
 
 
-# --- 2. TEXT EXTRACTION (UPDATED) ---
+# --- 2. TEXT EXTRACTION ---
 def extract_text_from_pdf_stream(uploaded_file):
-    """
-    Extracts text directly from the uploaded memory stream.
-    Returns a LIST of lines to support line-by-line parsing.
-    """
     try:
         file_bytes = uploaded_file.read()
         doc = fitz.open(stream=file_bytes, filetype="pdf")
 
         all_lines = []
         for page in doc:
-            # "blocks" is often cleaner than "text" for preserving newlines
             text = page.get_text("text")
-            # Split into lines immediately
             all_lines.extend(text.split('\n'))
 
         doc.close()
         return all_lines
     except Exception as e:
-        return []  # Return empty list on error
+        return []
+
+    # --- 3. PARSING LOGIC ---
 
 
-# --- 3. DYNAMIC PARSING LOGIC (NEW) ---
 def _is_level_1_header(line):
-    """
-    Internal Helper: checks if a line is a main header (Level 1).
-    Matches: "1. Introduction", "IV. Methodology"
-    Ignores: "1.1", "II.A", "I like apples"
-    """
     clean_line = line.strip()
+    if len(clean_line) > 120: return False
 
-    # Safety: Headers are rarely > 100 chars
-    if len(clean_line) > 120:
-        return False
-
-    # Arabic Pattern: Digit + Dot + SPACE (e.g., "1. ")
-    # The space ensures we don't match "1.1" (which has a digit after the dot)
     arabic_pattern = r"^\d+\.\s+.*"
-
-    # Roman Pattern: Roman Numeral + Dot + SPACE (e.g., "IV. ")
-    # Matches Roman Numerals followed immediately by a dot and space
     roman_pattern = r"^(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})\.\s+.*"
 
     if re.match(arabic_pattern, clean_line) or re.match(roman_pattern, clean_line):
@@ -59,91 +42,68 @@ def _is_level_1_header(line):
 
 
 def split_into_sections(text_lines):
-    """
-    Dynamically groups text into Main Sections.
-    - Captures "1." or "I."
-    - Merges "1.1" or "II.A" into the parent section.
-    - STOPS at References/Appendix.
-    """
-    # Keywords that stop the parsing immediately
     STOP_KEYWORDS = ["REFERENCES", "BIBLIOGRAPHY", "APPENDIX", "APPENDICES", "ACKNOWLEDGEMENT"]
-
     sections = {}
-    current_header = "PREAMBLE"  # Default container for Title/Abstract
+    current_header = "PREAMBLE"
     sections[current_header] = []
 
     for line in text_lines:
         clean_line = line.strip()
-        if not clean_line:
-            continue
+        if not clean_line: continue
 
-        # A. Check Stop Keywords (Case Insensitive)
         upper_line = clean_line.upper().replace('.', '')
-
-        # Check if line contains strict stop keywords
         is_stop_word = False
         for keyword in STOP_KEYWORDS:
-            # Matches if the line IS the keyword or starts with it (e.g., "7. REFERENCES")
             if keyword in upper_line and len(upper_line) < len(keyword) + 10:
                 is_stop_word = True
                 break
 
-        if is_stop_word:
-            break  # Stop processing the rest of the file
+        if is_stop_word: break
 
-        # B. Check for New Main Section
         if _is_level_1_header(clean_line):
             current_header = clean_line
-            sections[current_header] = []  # Start a new list for this section
+            sections[current_header] = []
         else:
-            # C. Add Content
-            # Appends regular text OR subsections (1.1, 1.2) to the current main header
             sections[current_header].append(clean_line)
 
-    # Convert lists to single strings
-    # Only return sections that actually have content
     final_output = {k: "\n".join(v) for k, v in sections.items() if v}
     return final_output
 
 
-# --- 4. AI REVIEW GENERATION ---
+# --- 4. AI REVIEW GENERATION (UPDATED) ---
 def generate_section_review(client, section_name, section_text):
     """
-    Sends a specific section to the LLM for review.
+    Sends a section to the LLM.
+    Now allows Mathematical symbols because we are using a Unicode font.
     """
 
-    # --- DYNAMIC INSTRUCTION LOGIC ---
-    # Logic: "intro" matches "1. INTRODUCTION", "result" matches "IV. RESULTS"
     special_focus = ""
-
     if "result" in section_name.lower():
         special_focus = """
-            Since this is the RESULTS section, your PRIMARY focus must be on:
-            - Are the results useful and significant?
-            - Do they clearly prove the proposed method works?
-            - Are the comparisons with baselines fair and convincing?
-            """
-    elif "abstract" in section_name.lower() or "introduction" in section_name.lower() or "preamble" in section_name.lower():
+        Since this is the RESULTS section, focus on:
+        - Are the results significant?
+        - Do they prove the proposed method works?
+        """
+    elif "abstract" in section_name.lower() or "introduction" in section_name.lower():
         special_focus = """
-            Since this is the Introduction/Abstract, your PRIMARY focus must be on:
-            - Is the problem clearly defined and relevant to IEEE conferences?
-            - Is the proposed solution novel and interesting compared to existing work?
-            """
+        Since this is the Introduction/Abstract, focus on:
+        - Is the problem defined clearly?
+        - Is the solution novel?
+        """
 
-    # --- FINAL PROMPT ---
-    # I have refined this to be strict as requested
+    # --- REMOVED THE "NO SPECIAL CHARS" RESTRICTION ---
     prompt = f"""
         You are a strict IEEE conference reviewer.
         Review the following '{section_name}' section.
 
-        ### STRICT DATA RULES
-        1. **Do not modify the source text.** You are reviewing it, not rewriting it.
-        2. **Do not hallucinate** methods or results not present in the text.
-        3. **Ignore References/Appendix** if any accidentally slipped in.
+        ### FORMATTING RULES
+        1. **Do NOT use Markdown.** (No **bold**, *italics*, or # headers).
+        2. **Use mathematical symbols FREELY.** (e.g., use θ, π, →, ≤).
+        3. **Keep the tone professional and direct.**
 
         ### REVIEW OBJECTIVES
         1. Relevance to standard IEEE conference topics.
-        2. Novelty and Interest (is this work new?).
+        2. Novelty and Interest.
         3. Clarity and Scientific Rigor.
 
         {special_focus}
@@ -154,36 +114,48 @@ def generate_section_review(client, section_name, section_text):
         {section_text[:15000]} 
         """
     try:
-        # Note: 'gpt-5' is not generally available yet.
-        # Ensure you use 'gpt-4o' or 'gpt-4-turbo' unless you have specific beta access.
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"⚠️ Error querying AI: {str(e)}"
+        return f"Error querying AI: {str(e)}"
 
 
-# --- 5. REPORT GENERATION ---
+# --- 5. REPORT GENERATION (FONT FIXED) ---
+
 def create_pdf_report(full_report_text):
-    """Generates a downloadable PDF report."""
+    """Generates a downloadable PDF report with Unicode support."""
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
 
-    # Title
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt="AI Paper Improvement Report", ln=True, align='C')
-    pdf.ln(10)
+    # --- UPDATE PATH HERE ---
+    # Double check if your file is named "DejaVuSans.ttf" or "dejavu.ttf" inside that folder
+    font_path = os.path.join("dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
 
-    # Body
-    pdf.set_font("Arial", size=12)
+    if os.path.exists(font_path):
+        # Register the font
+        pdf.add_font('DejaVu', '', font_path, uni=True)
+        pdf.set_font('DejaVu', '', 12)
 
-    # Sanitize text to prevent crashes (Latin-1 fix)
-    # Using 'replace' handles unmapped characters gracefully
-    safe_text = full_report_text.encode('latin-1', 'replace').decode('latin-1')
+        # Title
+        pdf.set_font('DejaVu', '', 16)
+        pdf.cell(200, 10, txt="AI Paper Improvement Report", ln=True, align='C')
+        pdf.ln(10)
 
-    pdf.multi_cell(0, 10, safe_text)
+        # Body
+        pdf.set_font('DejaVu', '', 12)
+        pdf.multi_cell(0, 10, full_report_text)
 
-    return pdf.output(dest="S").encode("latin-1", "replace")
+        return pdf.output(dest="S").encode("latin-1")
+
+    else:
+        print(f"❌ ERROR: Font not found at: {font_path}")
+
+        # Fallback to Arial (No symbols)
+        pdf.set_font("Arial", size=12)
+        safe_text = full_report_text.encode('latin-1', 'replace').decode('latin-1')
+        pdf.multi_cell(0, 10, safe_text)
+
+        return pdf.output(dest="S").encode("latin-1", "replace")
