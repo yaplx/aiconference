@@ -30,14 +30,38 @@ def extract_text_from_pdf_stream(uploaded_file):
 
 
 def _is_level_1_header(line):
+    """
+    Internal Helper: checks if a line is a main header (Level 1).
+    Matches:
+      - "1. Introduction", "1 Introduction" (Arabic)
+      - "IV. Methodology", "IV Methodology" (Roman)
+    Ignores:
+      - "1.1", "II.A" (Subsections)
+      - "I like apples" (Sentences starting with I)
+    """
     clean_line = line.strip()
-    if len(clean_line) > 120: return False
 
-    arabic_pattern = r"^\d+\.\s+.*"
-    roman_pattern = r"^(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})\.\s+.*"
+    # Safety: Headers are rarely > 100 chars
+    if len(clean_line) > 120:
+        return False
+
+    # --- ARABIC PATTERN ---
+    # Logic: Start (^), Digits (\d+), Optional Dot (\.?), SPACE (\s), Capital Letter ([A-Z])
+    # Examples:
+    # "1. Introduction" -> Matches (Has dot, has space, has Capital)
+    # "1 Introduction"  -> Matches (No dot, has space, has Capital)
+    # "1.1 Intro"       -> FAILS (After '1.', next char is '1', not space)
+    # "1 introduction"  -> FAILS (Lowercase start is likely a list item, not a title)
+    arabic_pattern = r"^\d+\.?\s+[A-Z]"
+
+    # --- ROMAN PATTERN ---
+    # Logic: Start, Roman Numerals, Optional Dot (\.?), SPACE, Capital Letter
+    # We enforce [A-Z] to avoid matching "I like this" (where 'like' is lowercase)
+    roman_pattern = r"^(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})\.?\s+[A-Z]"
 
     if re.match(arabic_pattern, clean_line) or re.match(roman_pattern, clean_line):
         return True
+
     return False
 
 
@@ -66,15 +90,22 @@ def split_into_sections(text_lines):
         else:
             sections[current_header].append(clean_line)
 
+    # --- DELETE PREAMBLE ---
+    # We remove the Preamble (Title/Abstract) from the REVIEW LIST
+    # but we assume the UI extracted the title before calling this.
+    if "PREAMBLE" in sections:
+        del sections["PREAMBLE"]
+
     final_output = {k: "\n".join(v) for k, v in sections.items() if v}
     return final_output
 
 
 # --- 4. AI REVIEW GENERATION (UPDATED) ---
-def generate_section_review(client, section_name, section_text):
+# We added 'paper_title' argument here
+def generate_section_review(client, section_name, section_text, paper_title="Untitled Paper"):
     """
     Sends a section to the LLM.
-    Now allows Mathematical symbols because we are using a Unicode font.
+    Now includes the Paper Title in the prompt for context.
     """
 
     special_focus = ""
@@ -84,22 +115,24 @@ def generate_section_review(client, section_name, section_text):
         - Are the results significant?
         - Do they prove the proposed method works?
         """
-    elif "abstract" in section_name.lower() or "introduction" in section_name.lower():
+    elif "intro" in section_name.lower():
         special_focus = """
-        Since this is the Introduction/Abstract, focus on:
+        Focus on:
         - Is the problem defined clearly?
         - Is the solution novel?
         """
 
-    # --- REMOVED THE "NO SPECIAL CHARS" RESTRICTION ---
+    # --- UPDATED PROMPT ---
     prompt = f"""
         You are a strict IEEE conference reviewer.
-        Review the following '{section_name}' section.
+        You are reviewing a paper titled: "{paper_title}".
+
+        Current Section: '{section_name}'
 
         ### FORMATTING RULES
-        1. **Do NOT use Markdown.** (No **bold**, *italics*, or # headers).
-        2. **Use mathematical symbols FREELY.** (e.g., use θ, π, →, ≤).
-        3. **Keep the tone professional and direct.**
+        1. **Do NOT use Markdown.** (No **bold**, *italics*).
+        2. **Use mathematical symbols FREELY.** (e.g., θ, π, →).
+        3. **Keep the tone professional.**
 
         ### REVIEW OBJECTIVES
         1. Relevance to standard IEEE conference topics.
@@ -121,8 +154,6 @@ def generate_section_review(client, section_name, section_text):
         return response.choices[0].message.content
     except Exception as e:
         return f"Error querying AI: {str(e)}"
-
-
 # --- 5. REPORT GENERATION (FONT FIXED) ---
 
 def create_pdf_report(full_report_text):

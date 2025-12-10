@@ -105,32 +105,43 @@ if st.session_state.processing and uploaded_files:
 
         current_paper_report = f"REPORT FOR: {uploaded_file.name}\n\n"
 
+        # Initialize paper_title with filename as fallback
+        paper_title = uploaded_file.name
+
         with st.spinner(f"Reading {uploaded_file.name}..."):
-            # UPDATED: backend now returns a LIST of lines, not a single string
+            # UPDATED: backend now returns a LIST of lines
             text_lines = backend.extract_text_from_pdf_stream(uploaded_file)
 
             if not text_lines:
                 st.error(f"Could not extract text from {uploaded_file.name}.")
                 continue
 
+            # --- DETECT TITLE ---
+            # Grab the first non-empty line to use as the Title (since we delete Preamble)
+            for line in text_lines:
+                clean = line.strip()
+                if clean:
+                    paper_title = clean
+                    break
+
             # UPDATED: Pass the list of lines to the new parser
             sections = backend.split_into_sections(text_lines)
 
             if not sections:
                 st.warning(f"⚠️ No sections detected. Analyzing full text as one block.")
-                # Fallback: Join the list back into one big string
                 sections = {"Full Document": "\n".join(text_lines)}
 
         # Create tabs only if requested
         tabs = None
         if show_visuals:
             section_names = list(sections.keys())
-            # Safety check: if too many sections (e.g., bad parse), limit tabs
             if len(section_names) > 0:
                 tabs = st.tabs(section_names)
 
         for i, (name, content) in enumerate(sections.items()):
-            feedback = backend.generate_section_review(client, name, content)
+            # --- UPDATED: PASS TITLE TO BACKEND ---
+            feedback = backend.generate_section_review(client, name, content, paper_title)
+
             current_paper_report += f"\n\n--- SECTION: {name} ---\n"
             current_paper_report += feedback
 
@@ -140,7 +151,6 @@ if st.session_state.processing and uploaded_files:
                     st.caption(f"Analyzing {name}...")
                     st.markdown(feedback)
             elif not show_visuals:
-                # Simple log if visuals are off
                 st.write(f"✅ Analyzed section: {name}")
 
         # Generate PDF
