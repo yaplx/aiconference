@@ -46,13 +46,23 @@ def split_into_sections(text_lines):
     HEADER_MAP = {
         "ABSTRACT": "ABSTRACT",
         "INTRODUCTION": "INTRODUCTION",
-        "RELATED WORK": "RELATED WORK", "LITERATURE REVIEW": "RELATED WORK", "BACKGROUND": "RELATED WORK",
-        "METHOD": "METHODOLOGY", "METHODS": "METHODOLOGY", "METHODOLOGY": "METHODOLOGY",
-        "PROPOSED METHOD": "METHODOLOGY", "APPROACH": "METHODOLOGY",
-        "EXPERIMENT": "EXPERIMENTS", "EXPERIMENTS": "EXPERIMENTS", "EVALUATION": "EXPERIMENTS",
-        "RESULT": "RESULTS", "RESULTS": "RESULTS",
+        "RELATED WORK": "RELATED WORK",
+        "LITERATURE REVIEW": "RELATED WORK",
+        "BACKGROUND": "RELATED WORK",
+        "METHOD": "METHODOLOGY",
+        "METHODS": "METHODOLOGY",
+        "METHODOLOGY": "METHODOLOGY",
+        "PROPOSED METHOD": "METHODOLOGY",
+        "APPROACH": "METHODOLOGY",
+        "EXPERIMENT": "EXPERIMENTS",
+        "EXPERIMENTS": "EXPERIMENTS",
+        "EVALUATION": "EXPERIMENTS",
+        "RESULT": "RESULTS",
+        "RESULTS": "RESULTS",
         "DISCUSSION": "DISCUSSION",
-        "CONCLUSION": "CONCLUSION", "CONCLUSIONS": "CONCLUSION", "FUTURE WORK": "CONCLUSION"
+        "CONCLUSION": "CONCLUSION",
+        "CONCLUSIONS": "CONCLUSION",
+        "FUTURE WORK": "CONCLUSION"
     }
     STOP_KEYWORDS = ["REFERENCES", "BIBLIOGRAPHY", "APPENDIX", "APPENDICES", "ACKNOWLEDGEMENT"]
 
@@ -160,19 +170,20 @@ def create_pdf_report(full_report_text):
     pdf.cell(0, 10, txt="AI Paper Improvement Report", ln=True, align='C')
     pdf.ln(3)
 
-    # --- DISCLAIMER SECTION (New) ---
-    pdf.set_font(font_family, '', 9)  # Smaller font for disclaimer
-    pdf.set_text_color(100, 100, 100)  # Grey color to make it distinct
+    # --- DISCLAIMER SECTION (Updated) ---
+    pdf.set_font(font_family, '', 8)  # Smaller font for disclaimer
+    pdf.set_text_color(100, 100, 100)  # Grey color
 
     disclaimer_text = (
-        "DISCLAIMER: This report relies on common academic header recognition. "
-        "If your paper uses non-standard or unique headers that are not recognized, "
-        "the review for that specific section might be skipped as a standalone item. "
-        "However, the content is not lost; it is automatically merged into the previous section "
-        "and reviewed within that context."
+        "DISCLAIMER: This automated report relies on header recognition. "
+        "1) If a section header is unique or not recognized, that section's content "
+        "is automatically merged into the previous section for review. "
+        "2) SCOPE: To ensure focused feedback, this tool EXCLUDES the Title page info "
+        "(Preamble), References, Bibliography, Acknowledgements, and Appendices."
     )
 
-    pdf.multi_cell(0, 5, txt=disclaimer_text, align='C')
+    # multi_cell wraps text automatically
+    pdf.multi_cell(0, 4, txt=disclaimer_text, align='C')
     pdf.ln(10)  # Add space after disclaimer
 
     # --- MAIN CONTENT ---
