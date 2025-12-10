@@ -1,5 +1,7 @@
 import streamlit as st
 import os
+import zipfile
+import io
 from dotenv import load_dotenv
 
 # Import our custom backend logic
@@ -18,7 +20,7 @@ def check_password():
     elif os.getenv("APP_PASSWORD"):
         secret_password = os.getenv("APP_PASSWORD")
     else:
-        return True  # No password set, allow entry
+        return True
 
     user_input = st.text_input("🔑 Enter Access Password", type="password")
     if user_input == secret_password:
@@ -45,68 +47,109 @@ if not api_key:
     st.error("🚨 API Key not found! Check .env or Secrets.")
     st.stop()
 
-# Initialize the client using our backend helper
+# Initialize the client
 client = backend.get_openai_client(api_key)
 
 # === 2. MAIN USER INTERFACE ===
 
 st.title("📄 AI Conference Paper Reviewer")
-st.markdown("Upload your conference paper (PDF) to get specific feedback.")
+st.markdown("Upload **one or more** conference papers (PDF).")
 
-uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
+uploaded_files = st.file_uploader("Choose PDF file(s)", type="pdf", accept_multiple_files=True)
 
-if uploaded_file is not None:
-    if st.button("Analyze Paper"):
+if uploaded_files:
+    if st.button(f"Analyze {len(uploaded_files)} Paper(s)"):
 
-        full_report_string = ""
+        main_progress = st.progress(0)
 
-        with st.spinner("Processing PDF..."):
-            # CALL BACKEND: Extract Text
-            full_text = backend.extract_text_from_pdf_stream(uploaded_file)
+        # LIST TO STORE REPORTS: [("filename.pdf", bytes), ...]
+        generated_reports = []
 
-            if not full_text:
-                st.error("Could not extract text. Is this a scanned PDF?")
-                st.stop()
+        # LOOP THROUGH EACH FILE
+        for file_index, uploaded_file in enumerate(uploaded_files):
 
-            # CALL BACKEND: Split Sections
-            sections = backend.split_into_sections(full_text)
+            # Update Progress
+            main_progress.progress(file_index / len(uploaded_files))
 
-            if not sections:
-                st.warning("⚠️ No standard sections detected. Analyzing full text.")
-                sections = {"Full Document": full_text}
+            # UI Separator
+            st.divider()
+            st.subheader(f"📄 Processing: {uploaded_file.name}")
 
-        # Progress Bar Logic
-        progress_bar = st.progress(0)
-        total = len(sections)
+            current_paper_report = f"REPORT FOR: {uploaded_file.name}\n\n"
 
-        for i, (name, content) in enumerate(sections.items()):
-            progress_bar.progress((i + 1) / total)
+            with st.spinner(f"Reading {uploaded_file.name}..."):
+                # Backend: Extract
+                full_text = backend.extract_text_from_pdf_stream(uploaded_file)
 
-            with st.expander(f"🔍 Review: {name}", expanded=True):
-                # CALL BACKEND: Generate Review
-                feedback = backend.generate_section_review(client, name, content)
-                st.markdown(feedback)
+                if not full_text:
+                    st.error(f"Could not extract text from {uploaded_file.name}.")
+                    continue
 
-                # Append to report string
-                full_report_string += f"\n\n--- SECTION: {name} ---\n"
-                full_report_string += feedback
+                    # Backend: Split
+                sections = backend.split_into_sections(full_text)
 
-        st.success("✅ Review Complete!")
+                if not sections:
+                    st.warning(f"⚠️ No sections detected in {uploaded_file.name}. Analyzing full text.")
+                    sections = {"Full Document": full_text}
 
-        # Download Section
-        st.write("---")
-        st.subheader("📥 Download Report")
+            # Analyze Sections
+            section_names = list(sections.keys())
+            if section_names:
+                tabs = st.tabs(section_names)
 
-        # CALL BACKEND: Create PDF
-        pdf_bytes = backend.create_pdf_report(full_report_string)
+            for i, (name, content) in enumerate(sections.items()):
+                with tabs[i]:
+                    st.caption(f"Analyzing {name}...")
 
-        # Generate Filename
-        original_name = uploaded_file.name.replace(".pdf", "")
-        new_filename = f"{original_name}_peer_review_report.pdf"
+                    # Backend: Generate Review
+                    feedback = backend.generate_section_review(client, name, content)
+                    st.markdown(feedback)
 
-        st.download_button(
-            label="Download Report as PDF",
-            data=pdf_bytes,
-            file_name=new_filename,
-            mime="application/pdf"
-        )
+                    # Add to report string
+                    current_paper_report += f"\n\n--- SECTION: {name} ---\n"
+                    current_paper_report += feedback
+
+            # Generate PDF Bytes
+            pdf_bytes = backend.create_pdf_report(current_paper_report)
+
+            # Create Filename
+            original_name = uploaded_file.name.replace(".pdf", "")
+            new_filename = f"{original_name}_review.pdf"
+
+            # Store in list
+            generated_reports.append((new_filename, pdf_bytes))
+
+        # Loop Finished
+        main_progress.progress(1.0)
+        st.success("✅ All papers processed!")
+
+        # === DOWNLOAD LOGIC (Single vs Zip) ===
+        if generated_reports:
+            st.write("---")
+            st.subheader("📥 Download Results")
+
+            # CASE A: SINGLE FILE (No Zip needed)
+            if len(generated_reports) == 1:
+                single_filename, single_bytes = generated_reports[0]
+                st.download_button(
+                    label=f"Download Report ({single_filename})",
+                    data=single_bytes,
+                    file_name=single_filename,
+                    mime="application/pdf"
+                )
+
+            # CASE B: MULTIPLE FILES (Zip needed)
+            else:
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w") as zf:
+                    for file_name, file_data in generated_reports:
+                        zf.writestr(file_name, file_data)
+
+                zip_buffer.seek(0)
+
+                st.download_button(
+                    label=f"📦 Download All {len(generated_reports)} Reports (ZIP)",
+                    data=zip_buffer,
+                    file_name="All_Reviews.zip",
+                    mime="application/zip"
+                )

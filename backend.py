@@ -44,16 +44,48 @@ def split_into_sections(text):
 
 def generate_section_review(client, section_name, section_text):
     """Sends a specific section to the LLM for review."""
+    """Sends a specific section to the LLM for review."""
+
+    # --- DYNAMIC INSTRUCTION LOGIC ---
+    # Base instructions applicable to ALL sections
+    special_focus = ""
+
+    # If this is the RESULTS section, add specific focus on usefulness
+    if "result" in section_name.lower():
+        special_focus = """
+            Since this is the RESULTS section, your PRIMARY focus must be on:
+            - Are the results useful and significant?
+            - Do they clearly prove the proposed method works?
+            - Are the comparisons with baselines fair and convincing?
+            """
+    # If this is Abstract or Intro, focus more on Novelty/Relevance
+    elif "abstract" in section_name.lower() or "introduction" in section_name.lower():
+        special_focus = """
+            Since this is the Introduction/Abstract, your PRIMARY focus must be on:
+            - Is the problem clearly defined and relevant to IEEE conferences?
+            - Is the proposed solution novel and interesting compared to existing work?
+            """
+
+    # --- FINAL PROMPT ---
     prompt = f"""
-    You are an IEEE conference reviewer assistant. 
-    Review the following '{section_name}' section.
-    Suggest 3 specific improvements regarding but not limited to clarity, scientific rigor, or formatting.
-    Section Content:
-    {section_text[:15000]} 
-    """
+        You are a strict IEEE conference reviewer.
+        Review the following '{section_name}' section of a submitted paper.
+
+        General Evaluation Criteria for all sections:
+        1. Relevance to standard IEEE conference topics.
+        2. Novelty and Interest (is this work new?).
+        3. Clarity and Scientific Rigor.
+
+        {special_focus}
+
+        Provide 3-5 specific, actionable improvements based on the text below.
+
+        Section Content:
+        {section_text[:15000]} 
+        """
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
