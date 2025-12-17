@@ -32,8 +32,8 @@ def extract_text_from_pdf_stream(uploaded_file):
 
     # --- 3. HYBRID PARSING LOGIC ---
 
+
 def _is_level_1_numbering(line):
-    # Matches "1. Title" or "IV. Title", ignores "1.1"
     arabic = r"^\d+\.\s+[A-Z]"
     roman = r"^(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})\.\s+[A-Z]"
     if re.match(arabic, line) or re.match(roman, line):
@@ -45,23 +45,13 @@ def split_into_sections(text_lines):
     HEADER_MAP = {
         "ABSTRACT": "ABSTRACT",
         "INTRODUCTION": "INTRODUCTION",
-        "RELATED WORK": "RELATED WORK",
-        "LITERATURE REVIEW": "RELATED WORK",
-        "BACKGROUND": "RELATED WORK",
-        "METHOD": "METHODOLOGY",
-        "METHODS": "METHODOLOGY",
-        "METHODOLOGY": "METHODOLOGY",
-        "PROPOSED METHOD": "METHODOLOGY",
-        "APPROACH": "METHODOLOGY",
-        "EXPERIMENT": "EXPERIMENTS",
-        "EXPERIMENTS": "EXPERIMENTS",
-        "EVALUATION": "EXPERIMENTS",
-        "RESULT": "RESULTS",
-        "RESULTS": "RESULTS",
+        "RELATED WORK": "RELATED WORK", "LITERATURE REVIEW": "RELATED WORK", "BACKGROUND": "RELATED WORK",
+        "METHOD": "METHODOLOGY", "METHODS": "METHODOLOGY", "METHODOLOGY": "METHODOLOGY",
+        "PROPOSED METHOD": "METHODOLOGY", "APPROACH": "METHODOLOGY",
+        "EXPERIMENT": "EXPERIMENTS", "EXPERIMENTS": "EXPERIMENTS", "EVALUATION": "EXPERIMENTS",
+        "RESULT": "RESULTS", "RESULTS": "RESULTS",
         "DISCUSSION": "DISCUSSION",
-        "CONCLUSION": "CONCLUSION",
-        "CONCLUSIONS": "CONCLUSION",
-        "FUTURE WORK": "CONCLUSION"
+        "CONCLUSION": "CONCLUSION", "CONCLUSIONS": "CONCLUSION", "FUTURE WORK": "CONCLUSION"
     }
     STOP_KEYWORDS = ["REFERENCES", "BIBLIOGRAPHY", "APPENDIX", "APPENDICES", "ACKNOWLEDGEMENT"]
 
@@ -72,7 +62,6 @@ def split_into_sections(text_lines):
     for line in text_lines:
         clean_line = line.strip()
         upper_line = clean_line.upper()
-
         clean_upper_no_num = re.sub(r"^[\d\.IVXivx]+\s+", "", upper_line).strip()
 
         is_stop = False
@@ -85,11 +74,9 @@ def split_into_sections(text_lines):
         is_new_header = False
         final_header_name = ""
 
-        # Method 1: Keyword Match
         if clean_upper_no_num in HEADER_MAP:
             final_header_name = HEADER_MAP[clean_upper_no_num]
             is_new_header = True
-        # Method 2: Numbering Match
         elif _is_level_1_numbering(clean_line):
             final_header_name = clean_line
             is_new_header = True
@@ -108,37 +95,44 @@ def split_into_sections(text_lines):
     return final_output
 
 
-# --- 4. AI REVIEW GENERATION ---
+# --- 4. AI REVIEW GENERATION (UPDATED FOR DECISION SUPPORT) ---
 def generate_section_review(client, section_name, section_text, paper_title="Untitled Paper"):
-    special_focus = ""
+    # Custom instructions based on section type
+    context_instruction = ""
     if "METHOD" in section_name.upper():
-        special_focus = "Focus on: technical depth, clarity, and reproducibility."
+        context_instruction = "Check for: Reproducibility gaps, missing equations, or vague algorithm steps."
     elif "RESULT" in section_name.upper():
-        special_focus = "Focus on: Are results significant? Do they prove the method works?"
+        context_instruction = "Check for: Missing baselines, unclear metrics, or claims not supported by data."
     elif "INTRO" in section_name.upper():
-        special_focus = "Focus on: Is the problem clearly defined? Is the novelty explicitly stated?"
+        context_instruction = "Check for: Clear research gap and contribution statement."
 
     prompt = f"""
-        You are a strict IEEE conference reviewer.
-        Paper Title: "{paper_title}"
-        Current Section: '{section_name}'
+        You are an AI Assistant to a Human Reviewer.
+        Paper: "{paper_title}"
+        Section: "{section_name}"
 
-        ### FORMATTING RULES
-        1. Plain Text only (no Markdown).
-        2. Use Math symbols freely (θ, π, ->).
-        3. Professional tone.
-        4. Do not modify any data.
+        Your job is to screen this section and provide a clear recommendation.
+        You must choose ONE of these two outcomes:
+        1. SURE REJECT (Use if there are fatal flaws, missing data, or complete lack of rigor).
+        2. ACCEPT WITH SUGGESTIONS (Use if valid but needs improvement).
 
-        ### OBJECTIVES
-        1. Relevance.
-        2. Novelty.
-        3. Scientific Rigor.
+        ### OUTPUT FORMAT (Strictly follow this):
 
-        {special_focus}
-        Provide 3-5 actionable improvements based ONLY on the text below.
+        **RECOMMENDATION:** [SURE REJECT / ACCEPT WITH SUGGESTIONS]
+
+        **REVIEWER FOCUS POINTS:**
+        - (List 2-3 specific lines or claims the human reviewer needs to verify manually).
+        - (e.g., "Check equation 3 for derivation errors", "Verify if baseline X is actually comparable").
+
+        **REASONING & IMPROVEMENTS:**
+        - (Explain why you chose the recommendation).
+        - (If Accept: List improvements).
+        - (If Reject: List critical fatal flaws).
+
+        {context_instruction}
 
         Section Content:
-        {section_text[:15000]} 
+        {section_text[:15000]}
         """
     try:
         response = client.chat.completions.create(
@@ -150,51 +144,72 @@ def generate_section_review(client, section_name, section_text, paper_title="Unt
         return f"Error querying AI: {str(e)}"
 
 
-# --- 5. PDF REPORT GENERATION (UPDATED WITH DISCLAIMER) ---
+# --- 5. PDF REPORT GENERATION (UPDATED LAYOUT) ---
 def create_pdf_report(full_report_text):
     pdf = FPDF()
     pdf.add_page()
 
-    # Path setup
     font_path = os.path.join("dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
-
-    # Default fallback font
     font_family = "Arial"
 
     if os.path.exists(font_path):
         pdf.add_font('DejaVu', '', font_path, uni=True)
         font_family = 'DejaVu'
+        # Bold font for titles (Simulated by using same font but we handle headers differently below)
 
     # --- TITLE ---
     pdf.set_font(font_family, '', 16)
-    pdf.cell(0, 10, txt="AI Paper Improvement Report", ln=True, align='C')
+    pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(3)
 
-    # --- DISCLAIMER SECTION (Updated) ---
-    pdf.set_font(font_family, '', 8)  # Smaller font for disclaimer
-    pdf.set_text_color(100, 100, 100)  # Grey color
-
+    # --- DISCLAIMER ---
+    pdf.set_font(font_family, '', 8)
+    pdf.set_text_color(100, 100, 100)
     disclaimer_text = (
-        "DISCLAIMER: This automated report relies on header recognition. "
-        "1) If a section header is unique or not recognized, that section's content "
-        "is automatically merged into the previous section for review. "
-        "2) SCOPE: To ensure focused feedback, this tool EXCLUDES the Title page info "
-        "(Preamble), References, Bibliography, Acknowledgements, and Appendices."
+        "DISCLAIMER: This is an automated assistant tool. "
+        "The 'RECOMMENDATION' is a suggestion based on structural and content analysis. "
+        "The Human Reviewer must verify all 'FOCUS POINTS' manually."
     )
-
-    # multi_cell wraps text automatically
     pdf.multi_cell(0, 4, txt=disclaimer_text, align='C')
-    pdf.ln(10)  # Add space after disclaimer
+    pdf.ln(10)
 
-    # --- MAIN CONTENT ---
-    pdf.set_text_color(0, 0, 0)  # Reset to Black
+    # --- MAIN CONTENT PARSER ---
+    pdf.set_text_color(0, 0, 0)
     pdf.set_font(font_family, '', 12)
 
-    if font_family == 'DejaVu':
-        pdf.multi_cell(0, 10, full_report_text)
-        return pdf.output(dest="S").encode("latin-1")
-    else:
-        # Fallback cleaning for Arial
-        safe_text = full_report_text.encode('latin-1', 'replace').decode('latin-1')
-        pdf.multi_cell(0, 10, safe_text)
-        return pdf.output(dest="S").encode("latin-1", "replace")
+    # We process the text line by line to add basic formatting for the Recommendation
+    lines = full_report_text.split('\n')
+
+    for line in lines:
+        clean_line = line.strip()
+
+        # Highlight "SECTION:" headers
+        if "--- SECTION:" in clean_line:
+            pdf.ln(5)
+            pdf.set_font(font_family, '', 14)  # Larger for headers
+            pdf.cell(0, 10, txt=clean_line, ln=True)
+            pdf.set_font(font_family, '', 12)  # Reset
+
+        # Highlight "RECOMMENDATION:" lines
+        elif "**RECOMMENDATION:**" in clean_line or "RECOMMENDATION:" in clean_line:
+            pdf.set_font(font_family, '', 12)  # Use standard font but maybe add color/spacing
+
+            # Simple color coding (Red for Reject, Green/Black for Accept) - Optional
+            if "REJECT" in clean_line:
+                pdf.set_text_color(200, 0, 0)  # Dark Red
+            else:
+                pdf.set_text_color(0, 100, 0)  # Dark Green
+
+            pdf.cell(0, 10, txt=clean_line.replace("**", ""), ln=True)
+            pdf.set_text_color(0, 0, 0)  # Reset to black
+
+        # Standard Text
+        else:
+            # Handle wrapped text
+            if font_family == 'DejaVu':
+                pdf.multi_cell(0, 6, clean_line)  # Reduced line height for tighter list
+            else:
+                safe_text = clean_line.encode('latin-1', 'replace').decode('latin-1')
+                pdf.multi_cell(0, 6, safe_text)
+
+    return pdf.output(dest="S").encode("latin-1")
