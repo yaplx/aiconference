@@ -10,11 +10,11 @@ def get_openai_client(api_key):
     return OpenAI(api_key=api_key)
 
 
-# --- 2. HELPERS FOR LOGIC ---
+# --- 2. HELPER FUNCTIONS ---
 def roman_to_int(s):
     """
     Converts Roman numerals (IV, ii, X) to integers.
-    Returns None if invalid.
+    Returns None if the string is not a valid Roman numeral.
     """
     roman_map = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
     s = s.upper()
@@ -23,6 +23,8 @@ def roman_to_int(s):
 
     try:
         for char in reversed(s):
+            if char not in roman_map:
+                return None
             value = roman_map[char]
             if value < prev_value:
                 total -= value
@@ -30,22 +32,24 @@ def roman_to_int(s):
                 total += value
             prev_value = value
         return total
-    except KeyError:
+    except:
         return None
 
 
-def _is_header_candidate(line, expected_number):
+def _check_header_rules(line, expected_number):
     """
-    Checks if a line matches the user's strict rules:
-    1. Regex: Number (Arabic/Roman) + Opt Dot + Space + Phrase
-    2. Phrase Length < 25 chars
-    3. Phrase starts with Capital
-    4. Sequence: Number must == expected_number
+    Validates a line against strict user rules:
+    1. Regex: Start of line + Number (Arabic/Roman) + Optional Dot + Spaces + Phrase
+    2. Phrase: Must start with Capital Letter.
+    3. Length: Phrase length (excluding number/dot) must be < 30 chars.
+    4. Sequence: The number must match expected_number (Previous + 1).
     """
-    # Regex:
-    # Group 1: Number (Digits or Roman)
-    # Group 2: Optional Dot
-    # Group 3: Phrase (Must start with A-Z)
+    # Regex Breakdown:
+    # ^                     -> Start of line
+    # ([IVXLCDMivxlcdm]+|\d+) -> Group 1: Number (Roman or Arabic)
+    # (\.?)                 -> Group 2: Optional Dot
+    # \s+                   -> Spaces (1 or more)
+    # ([A-Z].*)             -> Group 3: Phrase (Must start with Capital A-Z)
     pattern = re.compile(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)\s+([A-Z].*)$")
 
     match = pattern.match(line)
@@ -53,13 +57,13 @@ def _is_header_candidate(line, expected_number):
         return False, None, None
 
     num_str = match.group(1)
-    phrase = match.group(3)
+    phrase = match.group(3).strip()
 
-    # RULE: Phrase length (excluding number) < 25 chars
-    if len(phrase) >= 25:
+    # RULE: Length of phrase < 30 chars
+    if len(phrase) >= 30:
         return False, None, None
 
-    # Resolve Number (Arabic or Roman)
+    # Resolve Number Value
     current_val = 0
     if num_str.isdigit():
         current_val = int(num_str)
@@ -69,19 +73,20 @@ def _is_header_candidate(line, expected_number):
             return False, None, None
         current_val = val
 
-    # RULE: Strict Sequence (Must match expected number)
+    # RULE: Sequential Check
+    # The detected number must match the expected sequence (e.g., if expected is 2, header must be 2)
     if current_val == expected_number:
         return True, num_str, phrase
 
     return False, None, None
 
 
-# --- 3. MAIN PARSING LOGIC ---
+# --- 3. MAIN SECTIONING LOGIC ---
 def extract_sections_visual(uploaded_file):
     """
-    Extracts text and splits it into sections based on strict numbering rules.
+    Extracts text and groups it into sections based on strict sequential numbering rules.
     """
-    # Read PDF content
+    # 1. Read PDF Text
     uploaded_file.seek(0)
     file_bytes = uploaded_file.read()
     doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -91,59 +96,61 @@ def extract_sections_visual(uploaded_file):
         text = page.get_text("text")
         raw_lines = text.split('\n')
         for line in raw_lines:
-            clean = re.sub(r"^\s*", "", line.strip())
+            # Clean leading whitespace but preserve internal spacing for logic
+            clean = line.strip()
             if clean:
                 all_lines.append(clean)
     doc.close()
 
-    # Sectioning State Machine
+    # 2. State Machine for Sectioning
     sections = []
-    current_section = {"title": "Preamble (Unnumbered)", "content": ""}
+    current_section = {"title": "Preamble/Introduction", "content": ""}
 
-    expected_number = 1  # We expect the first valid header to be 1 or I
+    # We expect the first numbered section to be 1 (or I)
+    expected_number = 1
 
-    # Specific Unnumbered Headers allowed (Exceptions to the rule)
-    valid_unnumbered = ["ABSTRACT", "REFERENCES", "BIBLIOGRAPHY", "ACKNOWLEDGMENT"]
+    # Allow common unnumbered headers (optional, but recommended for papers)
+    valid_unnumbered = ["ABSTRACT", "REFERENCES", "BIBLIOGRAPHY", "ACKNOWLEDGMENT", "APPENDIX"]
 
     for line in all_lines:
-        is_header, num_str, phrase = _is_header_candidate(line, expected_number)
+        is_numbered, num_str, phrase = _check_header_rules(line, expected_number)
 
-        # Check for allowed unnumbered headers (Abstract, etc.)
-        is_special_header = False
+        # Check for special unnumbered headers (Case insensitive check)
+        is_special = False
         upper_line = line.upper().replace(":", "").strip()
         if upper_line in valid_unnumbered:
-            is_special_header = True
-            phrase = line  # Use original casing
+            is_special = True
+            phrase = line
 
-        if is_header:
-            # SAVE PREVIOUS SECTION
+        if is_numbered:
+            # Save previous section
             if current_section["content"].strip():
                 sections.append(current_section)
 
-            # START NEW NUMBERED SECTION
+            # Start new Numbered Section
             current_section = {
                 "title": f"{num_str}. {phrase}",
                 "content": ""
             }
-            expected_number += 1  # Increment expectation (1 -> 2)
+            # Increment expected number (1 -> 2)
+            expected_number += 1
 
-        elif is_special_header:
-            # SAVE PREVIOUS
+        elif is_special:
+            # Save previous section
             if current_section["content"].strip():
                 sections.append(current_section)
 
-            # START NEW SPECIAL SECTION
+            # Start new Special Section (No number increment)
             current_section = {
                 "title": phrase,
                 "content": ""
             }
-            # We do NOT increment expected_number for unnumbered sections
 
         else:
-            # APPEND CONTENT
+            # Just regular content
             current_section["content"] += line + " "
 
-    # Append final section
+    # Append the final section
     if current_section["content"].strip():
         sections.append(current_section)
 
@@ -205,7 +212,7 @@ def create_pdf_report(full_report_text):
     pdf = FPDF()
     pdf.add_page()
 
-    font_family = "Arial"  # Standard fallback
+    font_family = "Arial"
 
     # --- TITLE ---
     pdf.set_font(font_family, 'B', 16)
@@ -230,7 +237,6 @@ def create_pdf_report(full_report_text):
     for line in lines:
         clean_line = line.strip()
 
-        # Simple formatting logic
         if "--- SECTION:" in clean_line:
             pdf.ln(5)
             pdf.set_font(font_family, 'B', 12)
@@ -243,6 +249,7 @@ def create_pdf_report(full_report_text):
             pdf.set_font(font_family, '', 11)
 
         else:
+            # Handle unicode characters safely for FPDF
             safe_text = clean_line.encode('latin-1', 'replace').decode('latin-1')
             pdf.multi_cell(0, 5, safe_text)
 
