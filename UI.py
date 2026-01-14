@@ -12,6 +12,7 @@ load_dotenv()
 if "processing" not in st.session_state: st.session_state.processing = False
 if "generated_reports" not in st.session_state: st.session_state.generated_reports = None
 if "csv_string" not in st.session_state: st.session_state.csv_string = None
+if "structure_debug" not in st.session_state: st.session_state.structure_debug = None
 
 
 def check_password():
@@ -43,19 +44,15 @@ client = backend.get_openai_client(api_key)
 st.title("⚖️ AI Conference Reviewer")
 
 conference_options = [
-    "General Quality Check",
-    "Learning Sciences, Educational Neuroscience, and Computer-supported Collaborative Learning",
-    "Mobile, Ubiquitous & Contextual Learning",
-    "Joyful Learning, Educational Games, and Digital Toys",
-    "Technology Applications in Higher Education and Adult Learning, Teacher Professional Development",
-    "Technology-enhanced Language and Humanities Learning",
-    "Artificial Intelligence in Education Applications and Practices, Intelligent Learning Environments",
-    "Learning Analytics and Learning Assessment",
-    "STEM and Maker Education",
-    "Educational Technology: Innovations, Policies & Practice",
+    "(Optional) General Quality Check",
+    "CVPR (Computer Vision)",
+    "ICRA (Robotics)",
+    "NeurIPS (AI/ML)",
+    "ACL (NLP)",
+    "IROS (Robotics)",
     "Custom..."
 ]
-selected_option = st.selectbox("Target Conference Theme", conference_options, disabled=st.session_state.processing)
+selected_option = st.selectbox("Target Conference", conference_options, disabled=st.session_state.processing)
 
 target_conference = "General Academic Standards"
 if selected_option == "Custom...":
@@ -68,14 +65,42 @@ uploaded_files = st.file_uploader("Upload PDF(s)", type="pdf", accept_multiple_f
                                   disabled=st.session_state.processing)
 show_visuals = st.checkbox("Show details on screen", value=True, disabled=st.session_state.processing)
 
-# === 3. PROCESSING LOGIC ===
-if uploaded_files and not st.session_state.processing:
-    if st.button(f"Start Review Process"):
-        st.session_state.processing = True
-        st.session_state.generated_reports = None
-        st.session_state.csv_string = None
+# === 3. BUTTONS (REVIEW VS TEST) ===
+col1, col2 = st.columns(2)
+
+with col1:
+    if uploaded_files and not st.session_state.processing:
+        if st.button(f"🚀 Start Review Process"):
+            st.session_state.processing = True
+            st.session_state.generated_reports = None
+            st.session_state.csv_string = None
+            st.session_state.structure_debug = None  # Clear debug
+            st.rerun()
+
+with col2:
+    if uploaded_files and not st.session_state.processing:
+        if st.button("🧪 Test Structure Only (No AI)"):
+            st.session_state.structure_debug = []
+            for f in uploaded_files:
+                sections = backend.extract_sections_visual(f)
+                st.session_state.structure_debug.append((f.name, sections))
+            st.rerun()
+
+# === 4. MODE: STRUCTURE TEST ===
+if st.session_state.structure_debug:
+    st.divider()
+    st.subheader("🛠️ Structure Detection Test (No AI cost)")
+    for fname, sections in st.session_state.structure_debug:
+        st.markdown(f"**📄 {fname}** - Detected {len(sections)} sections")
+        for sec in sections:
+            with st.expander(f"{sec['title']}"):
+                st.caption(sec['content'][:300] + "...")
+
+    if st.button("Clear Test Results"):
+        st.session_state.structure_debug = None
         st.rerun()
 
+# === 5. MODE: FULL AI PROCESSING ===
 if st.session_state.processing and uploaded_files:
     main_progress = st.progress(0)
     temp_reports = []
@@ -108,7 +133,7 @@ if st.session_state.processing and uploaded_files:
                 reason = first_pass.split("REASON:")[1].strip() if "REASON:" in first_pass else "First Pass Reject"
                 batch_results_data.append({
                     "filename": uploaded_file.name,
-                    "decision": "Rejected",  # <--- UPDATED LABEL
+                    "decision": "Rejected",
                     "notes": reason
                 })
 
@@ -143,18 +168,17 @@ if st.session_state.processing and uploaded_files:
                     if show_visuals:
                         with tabs[i]: st.caption(f"Skipped {name}")
 
-            # --- FINAL DECISION LOGIC ---
             if paper_suggestions:
                 combined_notes = "; ".join(paper_suggestions).replace("\n", " ")
                 batch_results_data.append({
                     "filename": uploaded_file.name,
-                    "decision": "Accept with Suggestion",  # <--- UPDATED LABEL
+                    "decision": "Accept with Suggestion",
                     "notes": combined_notes
                 })
             else:
                 batch_results_data.append({
                     "filename": uploaded_file.name,
-                    "decision": "Accept",  # <--- UPDATED LABEL
+                    "decision": "Accept",
                     "notes": "No major issues."
                 })
 
@@ -174,7 +198,7 @@ if st.session_state.processing and uploaded_files:
     st.session_state.processing = False
     st.rerun()
 
-# === 4. DOWNLOADS ===
+# === 6. DOWNLOADS ===
 if st.session_state.generated_reports:
     st.write("---")
     st.subheader("📥 Downloads")

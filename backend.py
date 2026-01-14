@@ -155,28 +155,28 @@ def extract_sections_visual(uploaded_file):
     return sections
 
 
-# --- 5. FIRST PASS EVALUATION ---
+# --- 5. FIRST PASS EVALUATION (UPDATED PROMPT) ---
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
     prompt = f"""
-    You are a Senior Area Chair for: "{conference_name}".
+    You are a reviewer assistant of the conference: "{conference_name}".
     Paper: "{paper_title}"
     Abstract: "{abstract_text[:4000]}"
 
-    Task: Desk Reject Check.
+    Task: Perform a Desk Reject Check.
 
     Criteria for REJECT:
-    1. Irrelevant to {conference_name}.
-    2. Zero novelty (textbook summary).
-    3. Fatal structure (no method/result).
+    1. Irrelevant: Topic is outside the scope of {conference_name}.
+    2. Novelty: Zero contribution (textbook summary).
+    3. Structure: Fatal flaw (missing scientific method).
 
     OUTPUT FORMAT:
-    Option 1:
+    Option 1 (If Reject):
     **DECISION:** REJECT
-    **REASON:** (One sentence summary)
+    **REASON:** The paper is not relevant to the conference theme.
 
-    Option 2:
+    Option 2 (If Proceed):
     **DECISION:** PROCEED
-    **REASON:** (One sentence summary)
+    **REASON:** Relevant topic and standard structure.
     """
     try:
         response = client.chat.completions.create(
@@ -188,7 +188,7 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
         return f"Error: {str(e)}"
 
 
-# --- 6. SECTION REVIEW ---
+# --- 6. SECTION REVIEW (UPDATED PROMPT WITH FOCUS) ---
 def generate_section_review(client, section_name, section_text, paper_title):
     clean_name = section_name.upper().strip()
     clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
@@ -196,12 +196,25 @@ def generate_section_review(client, section_name, section_text, paper_title):
     if clean_name in SKIP_REVIEW_SECTIONS or section_name.upper() in SKIP_REVIEW_SECTIONS:
         return None
 
+    # --- ADD SECTION-SPECIFIC FOCUS ---
+    section_focus = ""
+    if "METHOD" in clean_name:
+        section_focus = "Focus on: Reproducibility, mathematical soundness, and clarity of the algorithm steps."
+    elif "RESULT" in clean_name:
+        section_focus = "Focus on: Fairness of baselines, statistical significance, and whether claims match the data."
+    elif "INTRO" in clean_name:
+        section_focus = "Focus on: Clarity of the research gap and explicit contribution statement."
+    elif "RELATED" in clean_name:
+        section_focus = "Focus on: Coverage of recent state-of-the-art works (post-2020)."
+    elif "CONCLUSION" in clean_name:
+        section_focus = "Focus on: Whether the conclusion is supported by the experiments presented."
+
     prompt = f"""
-    You are a Technical Reviewer.
+    You are a reviewer assistant of the conference.
     Paper: "{paper_title}"
     Section: "{section_name}"
 
-    Task: Flag issues needing human check.
+    Task: Flag issues needing human check. {section_focus}
 
     OUTPUT FORMAT:
     **STATUS:** [ACCEPT / ACCEPT WITH SUGGESTIONS]
@@ -256,20 +269,11 @@ def create_pdf_report(full_report_text):
     return pdf.output(dest="S").encode("latin-1")
 
 
-# --- 8. CSV BATCH GENERATOR (Updated) ---
+# --- 8. CSV BATCH GENERATOR ---
 def create_batch_csv(paper_results_list):
-    """
-    Generates a simple CSV with 3 columns:
-    Filename | Status (Accept/Reject/Accept with Suggestion) | Notes
-    """
     output = io.StringIO()
     writer = csv.writer(output)
-
-    # Header
     writer.writerow(["Filename", "Decision", "Comments"])
-
-    # Rows
     for p in paper_results_list:
         writer.writerow([p['filename'], p['decision'], p['notes']])
-
     return output.getvalue()
