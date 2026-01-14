@@ -4,3 +4,4 @@ pymupdf
 python-dotenv
 fpdf
 pdfplumber
+pandas

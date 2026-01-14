@@ -63,7 +63,7 @@ def create_zip_of_reports(results_list):
             pdf_name = f"Report_{item['filename']}.pdf"
             zip_file.writestr(pdf_name, item['pdf_bytes'])
 
-        # Add Summary CSV if available (only in AI mode usually)
+        # Add Summary CSV if available
         if results_list[0].get('decision') != "N/A":
             csv_data = backend.create_batch_csv(results_list)
             zip_file.writestr("Batch_Summary.csv", csv_data)
@@ -76,48 +76,37 @@ def create_zip_of_reports(results_list):
 # ==========================================
 with st.sidebar:
     st.header("⚙️ Settings")
-
-    # Mode Selection
-    mode = st.radio(
-        "Processing Mode",
-        ["AI Analysis (Standard)", "Raw Structure Check (No AI)"],
-        help="Select 'Raw Structure' to see how the code splits the PDF without using GPT tokens."
-    )
-
-    st.divider()
-    st.info("Upload files in the main window.")
+    st.info("Upload files in the main window to begin the AI analysis.")
+    # Removed "Mode" selection radio button here
 
 # ==========================================
 # 4. MAIN INTERFACE
 # ==========================================
 st.title("⚖️ AI Conference Reviewer")
 
-# --- CONFERENCE SELECTION (Only relevant for AI Mode) ---
+# --- CONFERENCE SELECTION ---
 target_conference = "General Academic Standards"
-if mode == "AI Analysis (Standard)":
-    conference_options = [
-        "General Quality Check",
-        "Learning Sciences, Educational Neuroscience, and CSCL",
-        "Mobile, Ubiquitous & Contextual Learning",
-        "Joyful Learning, Educational Games, and Digital Toys",
-        "Technology Applications in Higher Education",
-        "Technology-enhanced Language and Humanities Learning",
-        "AI in Education Applications and Practices",
-        "Learning Analytics and Assessment",
-        "STEM and Maker Education",
-        "Educational Technology: Innovations & Policies",
-        "Custom..."
-    ]
+conference_options = [
+    "General Quality Check",
+    "Learning Sciences, Educational Neuroscience, and CSCL",
+    "Mobile, Ubiquitous & Contextual Learning",
+    "Joyful Learning, Educational Games, and Digital Toys",
+    "Technology Applications in Higher Education",
+    "Technology-enhanced Language and Humanities Learning",
+    "AI in Education Applications and Practices",
+    "Learning Analytics and Assessment",
+    "STEM and Maker Education",
+    "Educational Technology: Innovations & Policies",
+    "Custom..."
+]
 
-    selected_option = st.selectbox("Target Conference Track", conference_options, disabled=st.session_state.processing)
+selected_option = st.selectbox("Target Conference Track", conference_options, disabled=st.session_state.processing)
 
-    if selected_option == "Custom...":
-        user_custom = st.text_input("Enter Conference Name:", disabled=st.session_state.processing)
-        if user_custom.strip(): target_conference = user_custom
-    elif selected_option != "General Quality Check":
-        target_conference = selected_option
-else:
-    st.caption("Mode: **Raw Structure Check** (Conference selection disabled)")
+if selected_option == "Custom...":
+    user_custom = st.text_input("Enter Conference Name:", disabled=st.session_state.processing)
+    if user_custom.strip(): target_conference = user_custom
+elif selected_option != "General Quality Check":
+    target_conference = selected_option
 
 # --- FILE UPLOAD ---
 uploaded_files = st.file_uploader(
@@ -129,9 +118,7 @@ uploaded_files = st.file_uploader(
 
 # --- ACTION BUTTON ---
 if uploaded_files and not st.session_state.processing:
-    btn_label = "🚀 Start AI Review" if mode == "AI Analysis (Standard)" else "🔍 Check Structure Only"
-
-    if st.button(btn_label):
+    if st.button("🚀 Start AI Review"):
         st.session_state.processing = True
         st.session_state.results = []  # Clear previous results
         st.rerun()
@@ -152,70 +139,61 @@ if st.session_state.processing and uploaded_files:
             # Reset file pointer
             uploaded_file.seek(0)
 
-            # --- PATH A: RAW STRUCTURE CHECK ---
-            if mode == "Raw Structure Check (No AI)":
-                # Get raw text with section headers
-                report_text = backend.get_raw_sectioned_text(uploaded_file)
-                decision = "N/A"
-                notes = "Raw structure extraction."
+            # --- AI ANALYSIS (STANDARD) ---
 
-            # --- PATH B: AI ANALYSIS ---
+            # 1. Extract Sections
+            sections = backend.extract_sections_visual(uploaded_file)
+
+            # Get abstract for First Pass
+            uploaded_file.seek(0)
+            full_text_debug = backend.debug_get_all_section_text(uploaded_file)
+
+            # 2. First Pass (Desk Reject)
+            first_pass = backend.evaluate_first_pass(
+                client,
+                uploaded_file.name,
+                full_text_debug[:4000],
+                target_conference
+            )
+
+            report_log = f"\n\n--- FIRST PASS ---\n{first_pass}\n\n"
+
+            decision = "PROCEED"
+            notes = "Standard review."
+
+            if "REJECT" in first_pass:
+                decision = "REJECT"
+                report_log += "**Skipping detailed section review due to rejection.**"
+                if "REASON:" in first_pass:
+                    notes = first_pass.split("REASON:")[1].strip()
             else:
-                # 1. Extract Sections
-                sections = backend.extract_sections_visual(uploaded_file)
-                sections_dict = {sec['title']: sec['content'] for sec in sections}
+                # 3. Second Pass (Section Review)
+                report_log += "--- SECTION ANALYSIS ---\n"
+                flagged_items = []
 
-                # Get abstract for First Pass
-                uploaded_file.seek(0)
-                full_text_debug = backend.debug_get_all_section_text(uploaded_file)
+                for sec in sections:
+                    feedback = backend.generate_section_review(
+                        client,
+                        sec['title'],
+                        sec['content'],
+                        uploaded_file.name
+                    )
+                    if feedback:
+                        report_log += f"\n--- SECTION: {sec['title']} ---\n{feedback}\n"
 
-                # 2. First Pass (Desk Reject)
-                first_pass = backend.evaluate_first_pass(
-                    client,
-                    uploaded_file.name,
-                    full_text_debug[:4000],
-                    target_conference
-                )
+                        if "FLAGGED ISSUES" in feedback and "(None)" not in feedback:
+                            flagged_items.append(sec['title'])
 
-                report_log = f"REVIEW REPORT\nPaper: {uploaded_file.name}\nTarget: {target_conference}\n\n"
-                report_log += f"--- FIRST PASS ---\n{first_pass}\n\n"
-
-                decision = "PROCEED"
-                notes = "Standard review."
-
-                if "REJECT" in first_pass:
-                    decision = "REJECT"
-                    report_log += "**Skipping detailed section review due to rejection.**"
-                    if "REASON:" in first_pass:
-                        notes = first_pass.split("REASON:")[1].strip()
+                if flagged_items:
+                    decision = "Accept w/ Suggestions"
+                    notes = f"Issues in: {', '.join(flagged_items)}"
                 else:
-                    # 3. Second Pass (Section Review)
-                    report_log += "--- SECTION ANALYSIS ---\n"
-                    flagged_items = []
+                    decision = "Accept"
 
-                    for sec in sections:
-                        feedback = backend.generate_section_review(
-                            client,
-                            sec['title'],
-                            sec['content'],
-                            uploaded_file.name
-                        )
-                        if feedback:
-                            report_log += f"\n--- SECTION: {sec['title']} ---\n{feedback}\n"
-                            # Simple logic to capture notes for CSV
-                            if "FLAGGED ISSUES" in feedback and "(None)" not in feedback:
-                                flagged_items.append(sec['title'])
+            report_text = report_log
 
-                    if flagged_items:
-                        decision = "Accept w/ Suggestions"
-                        notes = f"Issues in: {', '.join(flagged_items)}"
-                    else:
-                        decision = "Accept"
-
-                report_text = report_log
-
-            # --- COMMON: GENERATE PDF ---
-            pdf_bytes = backend.create_pdf_report(report_text)
+            # --- GENERATE PDF ---
+            pdf_bytes = backend.create_pdf_report(report_text, filename=uploaded_file.name)
 
             temp_results.append({
                 'filename': uploaded_file.name,

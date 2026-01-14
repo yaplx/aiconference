@@ -44,16 +44,6 @@ IGNORE_CAPTION_KEYWORDS = [
     "EQ", "EQUATION"
 ]
 
-# --- REPORT DISCLAIMER ---
-REPORT_DISCLAIMER = """
----
-*** IMPORTANT DISCLAIMER ***
-1. **Section Recognition:** This report is generated automatically. There is a chance of failure in correctly recognizing or segmenting specific sections.
-2. **Scope of Review:**
-   - The **References** and **Appendices** sections were NOT reviewed.
-   - **Figures** and **Tables** were NOT reviewed for visual accuracy or content verification.
-"""
-
 
 # ==============================================================================
 # 2. INITIALIZATION
@@ -288,16 +278,16 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION
+# 7. PDF GENERATION (UPDATED: No Bottom Disclaimer)
 # ==============================================================================
-def create_pdf_report(full_report_text):
-    # Append the mandatory disclaimer
-    full_text_with_disclaimer = full_report_text + "\n" + REPORT_DISCLAIMER
+def create_pdf_report(full_report_text, filename="document.pdf"):
+    # We use the text exactly as provided, without appending the bottom disclaimer
+    full_text_processed = full_report_text
 
     pdf = FPDF()
     pdf.add_page()
 
-    # Font settings
+    # --- FONT SETUP ---
     font_family = "Arial"
     font_path = "DejaVuSans.ttf"
 
@@ -308,16 +298,34 @@ def create_pdf_report(full_report_text):
         except Exception as e:
             print(f"Warning: Could not load DejaVu font: {e}")
 
+    # --- HEADER GENERATION ---
+
+    # 1. Main Title
     pdf.set_font(font_family, '', 16)
+    pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
+    pdf.ln(2)
 
-    # Header
-    pdf.cell(0, 10, txt="AI Reviewer Report", ln=True, align='C')
-    pdf.ln(3)
+    # 2. Header Disclaimer (Gray, Small) - We KEEP this one
+    pdf.set_text_color(100, 100, 100)  # Gray
+    pdf.set_font(font_family, '', 8)
+    header_disclaimer = (
+        "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
+        "suggestion based on structural and content analysis. "
+        "The Human Reviewer must verify all 'FOCUS POINTS' manually."
+    )
+    pdf.multi_cell(0, 4, header_disclaimer, align='C')
+    pdf.ln(8)
 
+    # 3. "REPORT FOR" Line (Black, Larger)
+    pdf.set_text_color(0, 0, 0)  # Black
+    pdf.set_font(font_family, '', 14)
+    pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
+    pdf.ln(2)
+
+    # --- BODY CONTENT ---
     pdf.set_font(font_family, '', 11)
 
-    # Parse lines and set colors/bolding
-    lines = full_text_with_disclaimer.split('\n')
+    lines = full_text_processed.split('\n')
     for line in lines:
         if font_family == 'DejaVu':
             clean = line.strip()
@@ -325,14 +333,14 @@ def create_pdf_report(full_report_text):
             clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
 
         if "**DECISION:** REJECT" in clean:
-            pdf.set_text_color(200, 0, 0)
+            pdf.set_text_color(200, 0, 0)  # Red
             pdf.cell(0, 10, txt=clean, ln=True)
             pdf.set_text_color(0, 0, 0)
         elif "**DECISION:** PROCEED" in clean:
-            pdf.set_text_color(0, 150, 0)
+            pdf.set_text_color(0, 150, 0)  # Green
             pdf.cell(0, 10, txt=clean, ln=True)
             pdf.set_text_color(0, 0, 0)
-        elif "--- SECTION:" in clean or "IMPORTANT DISCLAIMER" in clean or "SECTION TITLE:" in clean:
+        elif "--- SECTION:" in clean or "SECTION TITLE:" in clean or "IMPORTANT DISCLAIMER" in clean or "SCOPE OF REVIEW" in clean:
             pdf.ln(5)
             pdf.cell(0, 10, txt=clean, ln=True)
         else:
@@ -354,21 +362,19 @@ def create_batch_csv(paper_results_list):
 
 
 # ==============================================================================
-# 9. RAW TEXT VIEWER (NO AI)
+# 9. DEBUG HELPER (Optional, kept for internal use)
 # ==============================================================================
-def get_raw_sectioned_text(uploaded_file):
+def debug_get_all_section_text(uploaded_file):
     """
     Returns a formatted string containing all text from the PDF,
-    delimited by the detected sections. No AI analysis is done.
-    Useful for verifying sectioning logic.
+    delimited by the detected sections.
     """
     # 1. Run the existing extraction logic
     sections = extract_sections_visual(uploaded_file)
 
     # 2. Build the output string
     output_buffer = []
-    output_buffer.append("=== RAW SECTIONING OUTPUT (NO AI ANALYSIS) ===")
-    output_buffer.append(f"Total Sections Detected: {len(sections)}\n")
+    output_buffer.append("=== SECTIONING OUTPUT ===")
 
     for i, sec in enumerate(sections):
         title = sec.get("title", "UNKNOWN TITLE")
