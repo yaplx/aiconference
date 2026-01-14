@@ -3,6 +3,7 @@ import re
 import os
 from openai import OpenAI
 from fpdf import FPDF
+from collections import Counter
 
 
 # --- 1. INITIALIZATION ---
@@ -10,7 +11,7 @@ def get_openai_client(api_key):
     return OpenAI(api_key=api_key)
 
 
-# --- 2. TEXT EXTRACTION ---
+# --- 2. ORIGINAL TEXT EXTRACTION (Legacy/Fallback) ---
 def extract_text_from_pdf_stream(uploaded_file):
     try:
         file_bytes = uploaded_file.read()
@@ -30,74 +31,111 @@ def extract_text_from_pdf_stream(uploaded_file):
     except Exception as e:
         return []
 
-    # --- 3. HYBRID PARSING LOGIC ---
+
+# --- 3. NEW: VISUAL SECTIONING (Font Size + Bold) ---
+def _get_body_font_size(doc):
+    """
+    Scans the document to find the most common font size (Body Text).
+    Returns the body_size to set a baseline.
+    """
+    font_sizes = []
+
+    # Scan max 5 pages to save time, or all if short
+    for i, page in enumerate(doc):
+        if i > 5: break
+        blocks = page.get_text("dict")["blocks"]
+        for block in blocks:
+            if "lines" in block:
+                for line in block["lines"]:
+                    for span in line["spans"]:
+                        # Round to nearest integer to handle float precision (11.98 -> 12)
+                        font_sizes.append(round(span["size"]))
+
+    if not font_sizes:
+        return 12  # Default fallback
+
+    # The most common font size is likely the body text
+    return Counter(font_sizes).most_common(1)[0][0]
 
 
-def _is_level_1_numbering(line):
-    arabic = r"^\d+\.\s+[A-Z]"
-    roman = r"^(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})\.\s+[A-Z]"
-    if re.match(arabic, line) or re.match(roman, line):
-        return True
-    return False
+def extract_sections_visual(uploaded_file):
+    """
+    Extracts sections based on Font Size and Bold formatting.
+    Returns a list of dicts: [{'title': '...', 'content': '...'}]
+    """
+    # Reset file pointer and read bytes
+    uploaded_file.seek(0)
+    file_bytes = uploaded_file.read()
+
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+
+    # 1. Get stats to know what "Normal" looks like
+    body_size = _get_body_font_size(doc)
+    header_threshold = body_size + 0.5  # Threshold: anything larger than body
+
+    sections = []
+    current_section = {"title": "Preamble/Introduction", "content": ""}
+
+    # Regex to catch numbered headers like "1. Introduction" or "2. RUNE"
+    header_pattern = re.compile(r"^\d+\.\s+[A-Z]")
+
+    for page in doc:
+        blocks = page.get_text("dict")["blocks"]
+
+        for block in blocks:
+            if "lines" not in block: continue
+
+            for line in block["lines"]:
+                # Reconstruct line text from spans
+                line_text = "".join([s["text"] for s in line["spans"]]).strip()
+                if not line_text: continue
+
+                # Check attributes (max size in line, and if any part is bold)
+                max_size = max([s["size"] for s in line["spans"]])
+
+                # Check for Bold (Flag 16 usually means bold, or font name contains 'Bold')
+                is_bold = any([(s["flags"] & 16) or "Bold" in s["font"] for s in line["spans"]])
+
+                # --- DECISION LOGIC: Is this a Header? ---
+                is_header = False
+
+                # Rule 1: Font size is larger than body text
+                if max_size >= header_threshold:
+                    is_header = True
+
+                # Rule 2: It is Bold AND matches a pattern (e.g. "2. RUNE")
+                elif is_bold and header_pattern.match(line_text):
+                    is_header = True
+
+                # Rule 3: Short bold lines (e.g. "Abstract", "References")
+                elif is_bold and len(line_text.split()) < 6:
+                    is_header = True
+
+                # --- Save Data ---
+                if is_header:
+                    # Save the previous section if it has content
+                    if current_section["content"].strip():
+                        sections.append(current_section)
+
+                    # Start a new section
+                    current_section = {
+                        "title": line_text,
+                        "content": ""
+                    }
+                else:
+                    # Append text to current section
+                    current_section["content"] += line_text + " "
+
+    # Append the final section
+    if current_section["content"].strip():
+        sections.append(current_section)
+
+    doc.close()
+    return sections
 
 
-def split_into_sections(text_lines):
-    HEADER_MAP = {
-        "ABSTRACT": "ABSTRACT",
-        "INTRODUCTION": "INTRODUCTION",
-        "RELATED WORK": "RELATED WORK", "LITERATURE REVIEW": "RELATED WORK", "BACKGROUND": "RELATED WORK",
-        "METHOD": "METHODOLOGY", "METHODS": "METHODOLOGY", "METHODOLOGY": "METHODOLOGY",
-        "PROPOSED METHOD": "METHODOLOGY", "APPROACH": "METHODOLOGY",
-        "EXPERIMENT": "EXPERIMENTS", "EXPERIMENTS": "EXPERIMENTS", "EVALUATION": "EXPERIMENTS",
-        "RESULT": "RESULTS", "RESULTS": "RESULTS",
-        "DISCUSSION": "DISCUSSION",
-        "CONCLUSION": "CONCLUSION", "CONCLUSIONS": "CONCLUSION", "FUTURE WORK": "CONCLUSION"
-    }
-    STOP_KEYWORDS = ["REFERENCES", "BIBLIOGRAPHY", "APPENDIX", "APPENDICES", "ACKNOWLEDGEMENT"]
-
-    sections = {}
-    current_header = "PREAMBLE"
-    sections[current_header] = []
-
-    for line in text_lines:
-        clean_line = line.strip()
-        upper_line = clean_line.upper()
-        clean_upper_no_num = re.sub(r"^[\d\.IVXivx]+\s+", "", upper_line).strip()
-
-        is_stop = False
-        for stop_word in STOP_KEYWORDS:
-            if clean_upper_no_num.startswith(stop_word):
-                is_stop = True
-                break
-        if is_stop: break
-
-        is_new_header = False
-        final_header_name = ""
-
-        if clean_upper_no_num in HEADER_MAP:
-            final_header_name = HEADER_MAP[clean_upper_no_num]
-            is_new_header = True
-        elif _is_level_1_numbering(clean_line):
-            final_header_name = clean_line
-            is_new_header = True
-
-        if is_new_header:
-            current_header = final_header_name
-            if current_header not in sections:
-                sections[current_header] = []
-        else:
-            sections[current_header].append(clean_line)
-
-    if "PREAMBLE" in sections:
-        del sections["PREAMBLE"]
-
-    final_output = {k: "\n".join(v) for k, v in sections.items() if v}
-    return final_output
-
-
-# --- 4. AI REVIEW GENERATION (UPDATED FOR DECISION SUPPORT) ---
+# --- 4. ORIGINAL: AI REVIEW GENERATION ---
 def generate_section_review(client, section_name, section_text, paper_title="Untitled Paper"):
-    # Custom instructions based on section type
     context_instruction = ""
     if "METHOD" in section_name.upper():
         context_instruction = "Check for: Reproducibility gaps, missing equations, or vague algorithm steps."
@@ -136,7 +174,7 @@ def generate_section_review(client, section_name, section_text, paper_title="Unt
         """
     try:
         response = client.chat.completions.create(
-            model="gpt-5",
+            model="gpt-4o",  # Updated model name for better availability
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
@@ -144,72 +182,26 @@ def generate_section_review(client, section_name, section_text, paper_title="Unt
         return f"Error querying AI: {str(e)}"
 
 
-# --- 5. PDF REPORT GENERATION (UPDATED LAYOUT) ---
+# --- 5. PDF REPORT GENERATION ---
 def create_pdf_report(full_report_text):
     pdf = FPDF()
     pdf.add_page()
 
-    font_path = os.path.join("dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
+    # Fallback to standard font if custom font missing
     font_family = "Arial"
 
-    if os.path.exists(font_path):
-        pdf.add_font('DejaVu', '', font_path, uni=True)
-        font_family = 'DejaVu'
-        # Bold font for titles (Simulated by using same font but we handle headers differently below)
-
     # --- TITLE ---
-    pdf.set_font(font_family, '', 16)
+    pdf.set_font(font_family, 'B', 16)
     pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(3)
 
-    # --- DISCLAIMER ---
-    pdf.set_font(font_family, '', 8)
-    pdf.set_text_color(100, 100, 100)
-    disclaimer_text = (
-        "DISCLAIMER: This is an automated assistant tool. "
-        "The 'RECOMMENDATION' is a suggestion based on structural and content analysis. "
-        "The Human Reviewer must verify all 'FOCUS POINTS' manually."
-    )
-    pdf.multi_cell(0, 4, txt=disclaimer_text, align='C')
-    pdf.ln(10)
-
     # --- MAIN CONTENT PARSER ---
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font(font_family, '', 12)
+    pdf.set_font(font_family, '', 10)
 
-    # We process the text line by line to add basic formatting for the Recommendation
+    # Simple line printing
     lines = full_report_text.split('\n')
-
     for line in lines:
-        clean_line = line.strip()
-
-        # Highlight "SECTION:" headers
-        if "--- SECTION:" in clean_line:
-            pdf.ln(5)
-            pdf.set_font(font_family, '', 14)  # Larger for headers
-            pdf.cell(0, 10, txt=clean_line, ln=True)
-            pdf.set_font(font_family, '', 12)  # Reset
-
-        # Highlight "RECOMMENDATION:" lines
-        elif "**RECOMMENDATION:**" in clean_line or "RECOMMENDATION:" in clean_line:
-            pdf.set_font(font_family, '', 12)  # Use standard font but maybe add color/spacing
-
-            # Simple color coding (Red for Reject, Green/Black for Accept) - Optional
-            if "REJECT" in clean_line:
-                pdf.set_text_color(200, 0, 0)  # Dark Red
-            else:
-                pdf.set_text_color(0, 100, 0)  # Dark Green
-
-            pdf.cell(0, 10, txt=clean_line.replace("**", ""), ln=True)
-            pdf.set_text_color(0, 0, 0)  # Reset to black
-
-        # Standard Text
-        else:
-            # Handle wrapped text
-            if font_family == 'DejaVu':
-                pdf.multi_cell(0, 6, clean_line)  # Reduced line height for tighter list
-            else:
-                safe_text = clean_line.encode('latin-1', 'replace').decode('latin-1')
-                pdf.multi_cell(0, 6, safe_text)
+        clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
+        pdf.multi_cell(0, 5, clean)
 
     return pdf.output(dest="S").encode("latin-1")

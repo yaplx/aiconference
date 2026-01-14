@@ -10,11 +10,13 @@ import backend
 st.set_page_config(page_title="FYP Paper Reviewer", page_icon="📄")
 load_dotenv()
 
-# Initialize Session State variables if they don't exist
+# Initialize Session State
 if "processing" not in st.session_state:
     st.session_state.processing = False
 if "generated_reports" not in st.session_state:
     st.session_state.generated_reports = None
+if "structure_debug" not in st.session_state:
+    st.session_state.structure_debug = None
 
 
 # --- Password Logic ---
@@ -35,6 +37,7 @@ def check_password():
     else:
         st.error("❌ Incorrect password")
         return False
+
 
 if not check_password():
     st.stop()
@@ -65,28 +68,60 @@ uploaded_files = st.file_uploader(
     "Choose PDF file(s)",
     type="pdf",
     accept_multiple_files=True,
-    disabled=is_locked  # <--- Locked if processing
+    disabled=is_locked
 )
 
-# Checkbox is also locked during processing
 show_visuals = st.checkbox(
     "Show detailed feedback on screen",
     value=True,
-    disabled=is_locked  # <--- Locked if processing
+    disabled=is_locked
 )
 
-# === 3. ANALYSIS LOGIC ===
+# === 3. ACTION BUTTONS ===
+col1, col2 = st.columns(2)
 
-# If files are uploaded AND we are not currently processing...
-if uploaded_files and not st.session_state.processing:
-    # Show the button
-    if st.button(f"Analyze {len(uploaded_files)} Paper(s)"):
-        # LOCK THE UI
-        st.session_state.processing = True
-        st.session_state.generated_reports = None  # Clear old results
-        st.rerun()  # Restart to apply the "disabled" grey-out effect
+with col1:
+    # THE ORIGINAL AI ANALYSIS
+    if uploaded_files and not st.session_state.processing:
+        if st.button(f"🚀 Analyze {len(uploaded_files)} Paper(s) (with AI)"):
+            st.session_state.processing = True
+            st.session_state.generated_reports = None
+            st.session_state.structure_debug = None  # Clear debug
+            st.rerun()
 
-# IF WE ARE IN PROCESSING MODE (This runs automatically after the rerun)
+with col2:
+    # THE NEW DEBUG MODE (No AI Cost)
+    if uploaded_files and not st.session_state.processing:
+        if st.button("🧪 Test Structure Only (No AI)"):
+            st.session_state.structure_debug = []
+
+            for f in uploaded_files:
+                # Call the new visual parser
+                sections = backend.extract_sections_visual(f)
+                st.session_state.structure_debug.append((f.name, sections))
+            st.rerun()
+
+# === 4. PROCESS: STRUCTURE TEST MODE (NO AI) ===
+if st.session_state.structure_debug:
+    st.divider()
+    st.subheader("🛠️ Structure Analysis Results (Local)")
+
+    for filename, sections in st.session_state.structure_debug:
+        st.markdown(f"**📄 File: {filename}**")
+        st.info(f"Detected {len(sections)} sections.")
+
+        # Display detected sections in expanders
+        for i, sec in enumerate(sections):
+            with st.expander(f"{i + 1}. {sec['title']}"):
+                st.write(f"**Title Detected:** {sec['title']}")
+                st.caption(f"**Content Preview:** {sec['content'][:300]}...")
+        st.divider()
+
+    if st.button("Clear Results"):
+        st.session_state.structure_debug = None
+        st.rerun()
+
+# === 5. PROCESS: FULL AI ANALYSIS MODE ===
 if st.session_state.processing and uploaded_files:
 
     main_progress = st.progress(0)
@@ -100,34 +135,24 @@ if st.session_state.processing and uploaded_files:
         st.subheader(f"📄 Processing: {uploaded_file.name}")
 
         current_paper_report = f"REPORT FOR: {uploaded_file.name}\n\n"
-
-        # Initialize paper_title with filename as fallback
         paper_title = uploaded_file.name
 
         with st.spinner(f"Reading {uploaded_file.name}..."):
-            # UPDATED: backend now returns a LIST of lines
-            text_lines = backend.extract_text_from_pdf_stream(uploaded_file)
+            # Use visual parser here too for better accuracy?
+            # Or stick to original text extraction if you prefer.
+            # Here we use the NEW visual parser because it's better at handling "2. RUNE"
+            sections_list = backend.extract_sections_visual(uploaded_file)
 
-            if not text_lines:
-                st.error(f"Could not extract text from {uploaded_file.name}.")
-                continue
-
-            # --- DETECT TITLE ---
-            # Grab the first non-empty line to use as the Title (since we delete Preamble)
-            for line in text_lines:
-                clean = line.strip()
-                if clean:
-                    paper_title = clean
-                    break
-
-            # UPDATED: Pass the list of lines to the new parser
-            sections = backend.split_into_sections(text_lines)
+            # Convert list back to dict for AI processing loop
+            sections = {sec['title']: sec['content'] for sec in sections_list}
 
             if not sections:
-                st.warning(f"⚠️ No sections detected. Analyzing full text as one block.")
-                sections = {"Full Document": "\n".join(text_lines)}
+                st.warning(f"⚠️ No sections detected. Analyzing full text.")
+                # Fallback to simple text extraction
+                raw_lines = backend.extract_text_from_pdf_stream(uploaded_file)
+                sections = {"Full Document": "\n".join(raw_lines)}
 
-        # Create tabs only if requested
+        # Create tabs
         tabs = None
         if show_visuals:
             section_names = list(sections.keys())
@@ -135,13 +160,11 @@ if st.session_state.processing and uploaded_files:
                 tabs = st.tabs(section_names)
 
         for i, (name, content) in enumerate(sections.items()):
-            # --- UPDATED: PASS TITLE TO BACKEND ---
             feedback = backend.generate_section_review(client, name, content, paper_title)
 
             current_paper_report += f"\n\n--- SECTION: {name} ---\n"
             current_paper_report += feedback
 
-            # Optional Visuals
             if show_visuals and tabs:
                 with tabs[i]:
                     st.caption(f"Analyzing {name}...")
@@ -158,13 +181,11 @@ if st.session_state.processing and uploaded_files:
     main_progress.progress(1.0)
     st.success("✅ All papers processed!")
 
-    # SAVE RESULTS TO STATE & UNLOCK
     st.session_state.generated_reports = temp_reports
     st.session_state.processing = False
-    st.rerun()  # Restart to unlock the UI and show download buttons
+    st.rerun()
 
-# === 4. DOWNLOAD SECTION (PERSISTENT) ===
-# This part runs even after the app refreshes/unlocks
+# === 6. DOWNLOAD SECTION ===
 if st.session_state.generated_reports:
     st.write("---")
     st.subheader("📥 Download Results")
@@ -193,7 +214,6 @@ if st.session_state.generated_reports:
             mime="application/zip"
         )
 
-    # Optional: Button to clear results and start over
     if st.button("Start New Review"):
         st.session_state.generated_reports = None
         st.rerun()
