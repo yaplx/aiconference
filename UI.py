@@ -8,7 +8,7 @@ import backend
 # ==========================================
 # 1. PAGE CONFIG & AUTHENTICATION
 # ==========================================
-st.set_page_config(page_title="Conference Desk Reviewer", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Conference Desk Reviewer", page_icon="⚖️")
 load_dotenv()
 
 # Session State Initialization
@@ -25,14 +25,14 @@ def check_password():
     else:
         return True  # No password set, allow access
 
-    user_input = st.sidebar.text_input("🔑 Enter Access Password", type="password")
+    # Original UI: Input in main area
+    user_input = st.text_input("🔑 Enter Access Password", type="password")
     if user_input == secret_password:
         return True
     return False
 
 
 if not check_password():
-    st.error("🔒 Access Denied. Please enter the correct password in the sidebar.")
     st.stop()
 
 # API Key Check
@@ -72,19 +72,11 @@ def create_zip_of_reports(results_list):
 
 
 # ==========================================
-# 3. SIDEBAR CONFIGURATION
-# ==========================================
-with st.sidebar:
-    st.header("⚙️ Settings")
-    st.info("Upload files in the main window to begin the AI analysis.")
-    # Removed "Mode" selection radio button here
-
-# ==========================================
-# 4. MAIN INTERFACE
+# 3. MAIN INTERFACE
 # ==========================================
 st.title("⚖️ AI Conference Reviewer")
 
-# --- CONFERENCE SELECTION ---
+# --- CONFERENCE SELECTION (Main Area) ---
 target_conference = "General Academic Standards"
 conference_options = [
     "General Quality Check",
@@ -108,7 +100,7 @@ if selected_option == "Custom...":
 elif selected_option != "General Quality Check":
     target_conference = selected_option
 
-# --- FILE UPLOAD ---
+# --- FILE UPLOAD (Main Area) ---
 uploaded_files = st.file_uploader(
     "Upload PDF(s)",
     type="pdf",
@@ -116,7 +108,7 @@ uploaded_files = st.file_uploader(
     disabled=st.session_state.processing
 )
 
-# --- ACTION BUTTON ---
+# --- ACTION BUTTON (Main Area) ---
 if uploaded_files and not st.session_state.processing:
     if st.button("🚀 Start AI Review"):
         st.session_state.processing = True
@@ -124,7 +116,7 @@ if uploaded_files and not st.session_state.processing:
         st.rerun()
 
 # ==========================================
-# 5. PROCESSING LOGIC
+# 4. PROCESSING LOGIC
 # ==========================================
 if st.session_state.processing and uploaded_files:
     progress_bar = st.progress(0)
@@ -139,7 +131,7 @@ if st.session_state.processing and uploaded_files:
             # Reset file pointer
             uploaded_file.seek(0)
 
-            # --- AI ANALYSIS (STANDARD) ---
+            # --- AI ANALYSIS ---
 
             # 1. Extract Sections
             sections = backend.extract_sections_visual(uploaded_file)
@@ -214,7 +206,7 @@ if st.session_state.processing and uploaded_files:
     st.rerun()
 
 # ==========================================
-# 6. RESULTS & DOWNLOADS
+# 5. RESULTS & DOWNLOADS
 # ==========================================
 if st.session_state.results:
     st.divider()

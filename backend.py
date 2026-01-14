@@ -359,30 +359,3 @@ def create_batch_csv(paper_results_list):
     for p in paper_results_list:
         writer.writerow([p['filename'], p['decision'], p['notes']])
     return output.getvalue()
-
-
-# ==============================================================================
-# 9. DEBUG HELPER (Optional, kept for internal use)
-# ==============================================================================
-def debug_get_all_section_text(uploaded_file):
-    """
-    Returns a formatted string containing all text from the PDF,
-    delimited by the detected sections.
-    """
-    # 1. Run the existing extraction logic
-    sections = extract_sections_visual(uploaded_file)
-
-    # 2. Build the output string
-    output_buffer = []
-    output_buffer.append("=== SECTIONING OUTPUT ===")
-
-    for i, sec in enumerate(sections):
-        title = sec.get("title", "UNKNOWN TITLE")
-        content = sec.get("content", "").strip()
-
-        # Format for readability
-        output_buffer.append(f"--- SECTION TITLE: {title} ---")
-        output_buffer.append(content)
-        output_buffer.append("\n" + "-" * 40 + "\n")
-
-    return "\n".join(output_buffer)
