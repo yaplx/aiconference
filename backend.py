@@ -2,6 +2,7 @@ import fitz  # PyMuPDF
 import re
 import csv
 import io
+import os
 from openai import OpenAI
 from fpdf import FPDF
 
@@ -32,7 +33,6 @@ SKIP_REVIEW_SECTIONS = [
     "DECLARATION"
 ]
 
-# Words that indicate a line is a Caption, not a Section Header
 IGNORE_CAPTION_KEYWORDS = [
     "FIGURE", "FIG", "FIG.",
     "TABLE", "TAB", "TAB.",
@@ -40,6 +40,16 @@ IGNORE_CAPTION_KEYWORDS = [
     "CHART", "GRAPH", "DIAGRAM",
     "EQ", "EQUATION"
 ]
+
+# --- REPORT DISCLAIMER ---
+REPORT_DISCLAIMER = """
+---
+*** IMPORTANT DISCLAIMER ***
+1. **Section Recognition:** This report is generated automatically. There is a chance of failure in correctly recognizing or segmenting specific sections.
+2. **Scope of Review:**
+   - The **References** and **Appendices** sections were NOT reviewed.
+   - **Figures** and **Tables** were NOT reviewed for visual accuracy or content verification.
+"""
 
 
 # --- 2. INITIALIZATION ---
@@ -76,17 +86,13 @@ def _parse_header_components(text):
 
 
 def _is_valid_numbered_header(num_str, phrase, expected_number):
-    # 1. Check Length
     if len(phrase) >= 30: return False
 
-    # 2. Check for Caption Keywords (Table, Figure, etc.)
-    # We check if the phrase starts with any ignored keyword (e.g. "Figure 1...")
     clean_phrase = phrase.upper().strip()
     for keyword in IGNORE_CAPTION_KEYWORDS:
         if clean_phrase.startswith(keyword):
             return False
 
-    # 3. Check Sequence
     current_val = 0
     if num_str.isdigit():
         current_val = int(num_str)
@@ -94,7 +100,6 @@ def _is_valid_numbered_header(num_str, phrase, expected_number):
         val = roman_to_int(num_str)
         if val is None: return False
         current_val = val
-
     return current_val == expected_number
 
 
@@ -184,6 +189,10 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 
     Task: Perform a Desk Reject Check.
 
+    **CRITICAL INSTRUCTION: Ignore OCR Artifacts.**
+    - Do NOT flag issues related to broken hyphenation (e.g., "de- cision").
+    - Focus ONLY on the semantic content and scientific value.
+
     Criteria for REJECT:
     1. Irrelevant: Topic is outside the scope of {conference_name}.
     2. Novelty: Zero contribution (textbook summary).
@@ -200,7 +209,7 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
     """
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
@@ -235,6 +244,16 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
     Task: Flag issues needing human check. {section_focus}
 
+    **INSTRUCTIONS ON FIGURES & TABLES:**
+    1. You cannot see the images.
+    3. **Raise Clarification:** If the text description of a Figure or Table is ambiguous, contradictory, or missing necessary context, explicitly raise a clarification point.
+    4. Do not attempt to guess the visual content.
+
+    **CRITICAL INSTRUCTION: Ignore OCR & Formatting Artifacts.**
+    - You will encounter text errors like "de- cision" (split words) or "??" (missing Greek symbols).
+    - **DO NOT** flag these as errors.
+    - **DO NOT** mention "typos" or "formatting issues" unless the text is completely unreadable.
+
     OUTPUT FORMAT:
     **STATUS:** [ACCEPT / ACCEPT WITH SUGGESTIONS]
 
@@ -247,7 +266,7 @@ def generate_section_review(client, section_name, section_text, paper_title):
     """
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
@@ -257,34 +276,49 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 # --- 7. PDF GENERATION ---
 def create_pdf_report(full_report_text):
+    full_text_with_disclaimer = full_report_text + "\n" + REPORT_DISCLAIMER
+
     pdf = FPDF()
     pdf.add_page()
+
     font_family = "Arial"
-    pdf.set_font(font_family, 'B', 16)
+    font_path = "DejaVuSans.ttf"
+
+    if os.path.exists(font_path):
+        try:
+            pdf.add_font('DejaVu', '', font_path, uni=True)
+            font_family = 'DejaVu'
+        except Exception as e:
+            print(f"Warning: Could not load DejaVu font: {e}")
+
+    pdf.set_font(font_family, '', 16)
+
     pdf.cell(0, 10, txt="AI Reviewer Report", ln=True, align='C')
     pdf.ln(3)
+
     pdf.set_font(font_family, '', 11)
 
-    lines = full_report_text.split('\n')
+    lines = full_text_with_disclaimer.split('\n')
     for line in lines:
-        clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
+        if font_family == 'DejaVu':
+            clean = line.strip()
+        else:
+            clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
+
         if "**DECISION:** REJECT" in clean:
             pdf.set_text_color(200, 0, 0)
-            pdf.set_font(font_family, 'B', 12)
             pdf.cell(0, 10, txt=clean, ln=True)
             pdf.set_text_color(0, 0, 0)
         elif "**DECISION:** PROCEED" in clean:
             pdf.set_text_color(0, 150, 0)
-            pdf.set_font(font_family, 'B', 12)
             pdf.cell(0, 10, txt=clean, ln=True)
             pdf.set_text_color(0, 0, 0)
-        elif "--- SECTION:" in clean:
+        elif "--- SECTION:" in clean or "IMPORTANT DISCLAIMER" in clean:
             pdf.ln(5)
-            pdf.set_font(font_family, 'B', 12)
             pdf.cell(0, 10, txt=clean, ln=True)
-            pdf.set_font(font_family, '', 11)
         else:
             pdf.multi_cell(0, 5, clean)
+
     return pdf.output(dest="S").encode("latin-1")
 
 
@@ -296,3 +330,32 @@ def create_batch_csv(paper_results_list):
     for p in paper_results_list:
         writer.writerow([p['filename'], p['decision'], p['notes']])
     return output.getvalue()
+
+
+# --- 9. NEW: DEBUGGING TOOL ---
+def debug_get_all_section_text(uploaded_file):
+    """
+    Returns a formatted string containing all text from the PDF,
+    delimited by the detected sections.
+    """
+    # 1. Run the existing extraction logic
+    sections = extract_sections_visual(uploaded_file)
+
+    # 2. Build the output string
+    output_buffer = []
+    output_buffer.append("=== DEBUG: SECTIONING VISUALIZATION ===")
+    output_buffer.append(f"Total Sections Detected: {len(sections)}\n")
+
+    for i, sec in enumerate(sections):
+        title = sec.get("title", "UNKNOWN TITLE")
+        content = sec.get("content", "")
+
+        # Add visual separators
+        output_buffer.append(f"--- [SECTION {i + 1}] TITLE: {title} ---")
+        output_buffer.append(f"Length: {len(content)} chars")
+        output_buffer.append("START CONTENT:")
+        output_buffer.append(content[:1000] + "... [TRUNCATED]" if len(
+            content) > 1000 else content)  # Show first 1000 chars to keep it readable, or full if short
+        output_buffer.append("END CONTENT\n")
+
+    return "\n".join(output_buffer)
