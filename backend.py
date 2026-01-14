@@ -1,28 +1,52 @@
 import fitz  # PyMuPDF
 import re
-import os
 from openai import OpenAI
 from fpdf import FPDF
 
+# --- 1. CONFIGURATION ---
+HEADER_MAP = {
+    "ABSTRACT": "ABSTRACT",
+    "INTRODUCTION": "INTRODUCTION",
+    "RELATED WORK": "RELATED WORK",
+    "LITERATURE REVIEW": "RELATED WORK",
+    "BACKGROUND": "RELATED WORK",
+    "METHOD": "METHODOLOGY",
+    "METHODS": "METHODOLOGY",
+    "METHODOLOGY": "METHODOLOGY",
+    "PROPOSED METHOD": "METHODOLOGY",
+    "APPROACH": "METHODOLOGY",
+    "EXPERIMENT": "EXPERIMENTS",
+    "EXPERIMENTS": "EXPERIMENTS",
+    "EVALUATION": "EXPERIMENTS",
+    "RESULT": "RESULTS",
+    "RESULTS": "RESULTS",
+    "DISCUSSION": "DISCUSSION",
+    "CONCLUSION": "CONCLUSION",
+    "CONCLUSIONS": "CONCLUSION",
+    "FUTURE WORK": "CONCLUSION",
+    "REFERENCES": "REFERENCES",
+    "BIBLIOGRAPHY": "REFERENCES",
+    "ACKNOWLEDGMENT": "ACKNOWLEDGMENT",
+    "ACKNOWLEDGEMENTS": "ACKNOWLEDGMENT",
+    "APPENDIX": "APPENDIX"
+}
 
-# --- 1. INITIALIZATION ---
+
+# --- 2. INITIALIZATION ---
 def get_openai_client(api_key):
     return OpenAI(api_key=api_key)
 
 
-# --- 2. HELPER FUNCTIONS ---
+# --- 3. HELPER FUNCTIONS ---
 def roman_to_int(s):
-    """
-    Converts Roman numerals (IV, ii, X) to integers.
-    """
+    """Converts Roman numerals to integers."""
     roman_map = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
     s = s.upper()
     total = 0
     prev_value = 0
     try:
         for char in reversed(s):
-            if char not in roman_map:
-                return None
+            if char not in roman_map: return None
             value = roman_map[char]
             if value < prev_value:
                 total -= value
@@ -36,147 +60,208 @@ def roman_to_int(s):
 
 def _parse_header_components(text):
     """
-    Attempts to parse a line into (Number String, Separator, Phrase).
-    Returns (num_str, phrase) or (None, None).
+    Parses a line into (Number String, Phrase).
+    Matches: "1. Introduction", "IV Results", etc.
     """
-    # Regex for "Number + Optional Dot + Space + Phrase"
-    # Matches: "1. Introduction" or "IV Results"
     pattern = re.compile(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)\s+([A-Z].*)$")
     match = pattern.match(text)
-
     if match:
         return match.group(1), match.group(3).strip()
     return None, None
 
 
-def _is_valid_header(num_str, phrase, expected_number):
+def _is_valid_numbered_header(num_str, phrase, expected_number):
     """
-    Validates the parsed components against strict rules.
+    Validates numbered headers against strict sequential rules.
     """
-    # RULE 1: Phrase length < 30 chars
-    if len(phrase) >= 30:
-        return False
+    if len(phrase) >= 30: return False
 
-    # RULE 2: Resolve Number Value
     current_val = 0
     if num_str.isdigit():
         current_val = int(num_str)
     else:
         val = roman_to_int(num_str)
-        if val is None:
-            return False
+        if val is None: return False
         current_val = val
 
-    # RULE 3: Sequential Check (Must match expected_number)
-    if current_val == expected_number:
-        return True
-
-    return False
+    return current_val == expected_number
 
 
-# --- 3. MAIN SECTIONING LOGIC (Updated for Split Lines) ---
+def _get_mapped_title(text):
+    """
+    Checks if text matches a known header in HEADER_MAP.
+    Returns the standardized title (e.g., 'METHODOLOGY') or None.
+    """
+    clean_upper = text.upper().strip().replace(":", "")
+    # Check exact match
+    if clean_upper in HEADER_MAP:
+        return HEADER_MAP[clean_upper]
+    # Check if it starts with a known map key (e.g., "EXPERIMENTAL RESULTS" -> "EXPERIMENTS")
+    for key, val in HEADER_MAP.items():
+        if clean_upper.startswith(key):
+            return val
+    return None
+
+
+# --- 4. MAIN SECTIONING LOGIC ---
 def extract_sections_visual(uploaded_file):
     """
-    Extracts text and groups sections, handling cases where
-    the number and title are on different lines.
+    Extracts sections using:
+    1. Strict Sequential Numbering (1 -> 2 -> 3)
+    2. Split-Line Detection (Number on line i, Title on line i+1)
+    3. HEADER_MAP for unnumbered sections and standardization.
     """
     uploaded_file.seek(0)
     file_bytes = uploaded_file.read()
     doc = fitz.open(stream=file_bytes, filetype="pdf")
 
-    # Extract all lines first
     all_lines = []
     for page in doc:
         text = page.get_text("text")
-        raw_lines = text.split('\n')
-        for line in raw_lines:
+        lines = text.split('\n')
+        for line in lines:
             clean = line.strip()
-            if clean:
-                all_lines.append(clean)
+            if clean: all_lines.append(clean)
     doc.close()
 
     sections = []
     current_section = {"title": "Preamble/Introduction", "content": ""}
     expected_number = 1
 
-    valid_unnumbered = ["ABSTRACT", "REFERENCES", "BIBLIOGRAPHY", "ACKNOWLEDGMENT", "APPENDIX"]
-
     i = 0
     while i < len(all_lines):
         line = all_lines[i]
 
-        # --- LOGIC START ---
         detected_header = False
         num_str = ""
         phrase = ""
+        is_numbered = False
 
-        # Case A: Standard Single Line Header ("1. Introduction")
+        # --- CHECK 1: Standard Numbered Header ("1. Introduction") ---
         p_num, p_phrase = _parse_header_components(line)
-        if p_num and _is_valid_header(p_num, p_phrase, expected_number):
+        if p_num and _is_valid_numbered_header(p_num, p_phrase, expected_number):
             detected_header = True
+            is_numbered = True
             num_str = p_num
             phrase = p_phrase
 
-        # Case B: Split Line Header (Line i = "1", Line i+1 = "Introduction")
-        # Only check if Case A failed
+        # --- CHECK 2: Split-Line Header (Line i="1", Line i+1="Introduction") ---
         elif not detected_header and i + 1 < len(all_lines):
-            # Check if current line is JUST a number (e.g. "1" or "1.")
             num_match = re.match(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)$", line)
-
             if num_match:
                 potential_num = num_match.group(1)
                 next_line = all_lines[i + 1].strip()
 
-                # Check if next line looks like a title (Capitalized, < 30 chars)
+                # Check next line: Capitalized, Short, Matches Sequence
                 if len(next_line) < 30 and next_line and next_line[0].isupper():
-                    if _is_valid_header(potential_num, next_line, expected_number):
+                    if _is_valid_numbered_header(potential_num, next_line, expected_number):
                         detected_header = True
+                        is_numbered = True
                         num_str = potential_num
                         phrase = next_line
-                        i += 1  # Skip the next line since we consumed it as the title!
+                        i += 1  # Skip next line as it was consumed
 
-        # --- PROCESSING ---
-        is_special = False
+        # --- CHECK 3: Unnumbered/Mapped Header (Abstract, References) ---
+        mapped_title = None
         if not detected_header:
-            upper_line = line.upper().replace(":", "").strip()
-            if upper_line in valid_unnumbered:
-                is_special = True
-                phrase = line
+            mapped_title = _get_mapped_title(line)
+            if mapped_title:
+                detected_header = True
+                is_numbered = False
+                phrase = mapped_title  # Use standardized name
 
+        # --- SAVE & ADVANCE ---
         if detected_header:
+            # Normalize phrase if it's in the map (e.g., "Proposed Method" -> "METHODOLOGY")
+            standardized = _get_mapped_title(phrase)
+            final_phrase = standardized if standardized else phrase
+
+            # Save previous section
             if current_section["content"].strip():
                 sections.append(current_section)
 
-            current_section = {
-                "title": f"{num_str}. {phrase}",
-                "content": ""
-            }
-            expected_number += 1
-
-        elif is_special:
-            if current_section["content"].strip():
-                sections.append(current_section)
-            current_section = {
-                "title": phrase,
-                "content": ""
-            }
+            # Start New Section
+            if is_numbered:
+                current_section = {
+                    "title": f"{num_str}. {final_phrase}",
+                    "content": ""
+                }
+                expected_number += 1
+            else:
+                current_section = {
+                    "title": final_phrase,
+                    "content": ""
+                }
         else:
-            # If we merged a split header, we already incremented i,
-            # so we don't add the title to the content.
-            # But if it wasn't a header, we add the line.
+            # Append content
             current_section["content"] += line + " "
 
-        i += 1  # Move to next line
+        i += 1
 
+    # Append final section
     if current_section["content"].strip():
         sections.append(current_section)
 
     return sections
 
 
-# --- 4. AI REVIEW GENERATION (Unchanged) ---
+# --- 5. AI REVIEW GENERATION ---
 def generate_section_review(client, section_name, section_text, paper_title="Untitled Paper"):
-    context_instruction = ""
     upper_name = section_name.upper()
+    context_instruction = ""
+
     if "METHOD" in upper_name:
         context_instruction = "Check for: Reproducibility gaps, missing equations, or vague algorithm steps."
+    elif "RESULT" in upper_name:
+        context_instruction = "Check for: Missing baselines, unclear metrics, or claims not supported by data."
+    elif "INTRO" in upper_name:
+        context_instruction = "Check for: Clear research gap and contribution statement."
+
+    prompt = f"""
+        You are an AI Assistant to a Human Reviewer.
+        Paper: "{paper_title}"
+        Section: "{section_name}"
+        Outcome: [SURE REJECT / ACCEPT WITH SUGGESTIONS]
+
+        {context_instruction}
+
+        Section Content:
+        {section_text[:15000]}
+    """
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error querying AI: {str(e)}"
+
+
+# --- 6. PDF REPORT GENERATION ---
+def create_pdf_report(full_report_text):
+    pdf = FPDF()
+    pdf.add_page()
+    font_family = "Arial"
+
+    pdf.set_font(font_family, 'B', 16)
+    pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
+    pdf.ln(3)
+
+    pdf.set_font(font_family, '', 11)
+    lines = full_report_text.split('\n')
+    for line in lines:
+        clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
+        if "--- SECTION:" in clean:
+            pdf.ln(5)
+            pdf.set_font(font_family, 'B', 12)
+            pdf.cell(0, 10, txt=clean, ln=True)
+            pdf.set_font(font_family, '', 11)
+        elif "**RECOMMENDATION:**" in clean:
+            pdf.set_font(font_family, 'B', 11)
+            pdf.cell(0, 8, txt=clean.replace("**", ""), ln=True)
+            pdf.set_font(font_family, '', 11)
+        else:
+            pdf.multi_cell(0, 5, clean)
+
+    return pdf.output(dest="S").encode("latin-1")
