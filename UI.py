@@ -193,7 +193,7 @@ if st.session_state.processing and uploaded_files:
         # Generate PDF
         pdf_bytes = backend.create_pdf_report(report_log)
         clean_name = uploaded_file.name.replace(".pdf", "").replace(".PDF", "")
-        final_pdf_name = f"{clean_name}_reviewed.pdf"
+        final_pdf_name = f"{clean_name}_reviews.pdf"
         temp_reports.append((final_pdf_name, pdf_bytes))
 
     # --- CSV GENERATION ---
