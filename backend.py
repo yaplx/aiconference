@@ -231,7 +231,7 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 
 
 # ==============================================================================
-# 6. SECTION REVIEW (GPT-5)
+# 6. SECTION REVIEW (GPT-5) - UPDATED FOR MAX 4 POINTS
 # ==============================================================================
 def generate_section_review(client, section_name, section_text, paper_title):
     clean_name = section_name.upper().strip()
@@ -272,8 +272,11 @@ def generate_section_review(client, section_name, section_text, paper_title):
     OUTPUT FORMAT:
     **STATUS:** [ACCEPT / ACCEPT WITH SUGGESTIONS]
 
-    **FLAGGED ISSUES (If any):**
+    **FLAGGED ISSUES (Max 4 critical points):**
     - (Point 1...)
+    - (Point 2...)
+    - (Point 3...)
+    - (Point 4...)
     (Leave empty if ACCEPT)
 
     Section Content:
