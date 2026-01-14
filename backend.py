@@ -6,7 +6,10 @@ import os
 from openai import OpenAI
 from fpdf import FPDF
 
-# --- 1. CONFIGURATION ---
+# ==============================================================================
+# 1. CONFIGURATION & CONSTANTS
+# ==============================================================================
+
 HEADER_MAP = {
     "ABSTRACT": "ABSTRACT",
     "INTRODUCTION": "INTRODUCTION",
@@ -52,12 +55,16 @@ REPORT_DISCLAIMER = """
 """
 
 
-# --- 2. INITIALIZATION ---
+# ==============================================================================
+# 2. INITIALIZATION
+# ==============================================================================
 def get_openai_client(api_key):
     return OpenAI(api_key=api_key)
 
 
-# --- 3. HELPER FUNCTIONS ---
+# ==============================================================================
+# 3. HELPER FUNCTIONS
+# ==============================================================================
 def roman_to_int(s):
     roman_map = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
     s = s.upper()
@@ -110,7 +117,9 @@ def _get_mapped_title(text):
     return None
 
 
-# --- 4. MAIN SECTIONING LOGIC ---
+# ==============================================================================
+# 4. MAIN SECTIONING LOGIC
+# ==============================================================================
 def extract_sections_visual(uploaded_file):
     uploaded_file.seek(0)
     file_bytes = uploaded_file.read()
@@ -180,7 +189,9 @@ def extract_sections_visual(uploaded_file):
     return sections
 
 
-# --- 5. FIRST PASS EVALUATION ---
+# ==============================================================================
+# 5. FIRST PASS EVALUATION (GPT-5)
+# ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
     prompt = f"""
     You are a reviewer assistant of the conference: "{conference_name}".
@@ -217,7 +228,9 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
         return f"Error: {str(e)}"
 
 
-# --- 6. SECTION REVIEW ---
+# ==============================================================================
+# 6. SECTION REVIEW (GPT-5)
+# ==============================================================================
 def generate_section_review(client, section_name, section_text, paper_title):
     clean_name = section_name.upper().strip()
     clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
@@ -274,13 +287,17 @@ def generate_section_review(client, section_name, section_text, paper_title):
         return f"Error: {str(e)}"
 
 
-# --- 7. PDF GENERATION ---
+# ==============================================================================
+# 7. PDF GENERATION
+# ==============================================================================
 def create_pdf_report(full_report_text):
+    # Append the mandatory disclaimer
     full_text_with_disclaimer = full_report_text + "\n" + REPORT_DISCLAIMER
 
     pdf = FPDF()
     pdf.add_page()
 
+    # Font settings
     font_family = "Arial"
     font_path = "DejaVuSans.ttf"
 
@@ -293,11 +310,13 @@ def create_pdf_report(full_report_text):
 
     pdf.set_font(font_family, '', 16)
 
+    # Header
     pdf.cell(0, 10, txt="AI Reviewer Report", ln=True, align='C')
     pdf.ln(3)
 
     pdf.set_font(font_family, '', 11)
 
+    # Parse lines and set colors/bolding
     lines = full_text_with_disclaimer.split('\n')
     for line in lines:
         if font_family == 'DejaVu':
@@ -313,7 +332,7 @@ def create_pdf_report(full_report_text):
             pdf.set_text_color(0, 150, 0)
             pdf.cell(0, 10, txt=clean, ln=True)
             pdf.set_text_color(0, 0, 0)
-        elif "--- SECTION:" in clean or "IMPORTANT DISCLAIMER" in clean:
+        elif "--- SECTION:" in clean or "IMPORTANT DISCLAIMER" in clean or "SECTION TITLE:" in clean:
             pdf.ln(5)
             pdf.cell(0, 10, txt=clean, ln=True)
         else:
@@ -322,7 +341,9 @@ def create_pdf_report(full_report_text):
     return pdf.output(dest="S").encode("latin-1")
 
 
-# --- 8. CSV BATCH GENERATOR ---
+# ==============================================================================
+# 8. CSV BATCH GENERATOR
+# ==============================================================================
 def create_batch_csv(paper_results_list):
     output = io.StringIO()
     writer = csv.writer(output)
@@ -332,30 +353,30 @@ def create_batch_csv(paper_results_list):
     return output.getvalue()
 
 
-# --- 9. NEW: DEBUGGING TOOL ---
-def debug_get_all_section_text(uploaded_file):
+# ==============================================================================
+# 9. RAW TEXT VIEWER (NO AI)
+# ==============================================================================
+def get_raw_sectioned_text(uploaded_file):
     """
     Returns a formatted string containing all text from the PDF,
-    delimited by the detected sections.
+    delimited by the detected sections. No AI analysis is done.
+    Useful for verifying sectioning logic.
     """
     # 1. Run the existing extraction logic
     sections = extract_sections_visual(uploaded_file)
 
     # 2. Build the output string
     output_buffer = []
-    output_buffer.append("=== DEBUG: SECTIONING VISUALIZATION ===")
+    output_buffer.append("=== RAW SECTIONING OUTPUT (NO AI ANALYSIS) ===")
     output_buffer.append(f"Total Sections Detected: {len(sections)}\n")
 
     for i, sec in enumerate(sections):
         title = sec.get("title", "UNKNOWN TITLE")
-        content = sec.get("content", "")
+        content = sec.get("content", "").strip()
 
-        # Add visual separators
-        output_buffer.append(f"--- [SECTION {i + 1}] TITLE: {title} ---")
-        output_buffer.append(f"Length: {len(content)} chars")
-        output_buffer.append("START CONTENT:")
-        output_buffer.append(content[:1000] + "... [TRUNCATED]" if len(
-            content) > 1000 else content)  # Show first 1000 chars to keep it readable, or full if short
-        output_buffer.append("END CONTENT\n")
+        # Format for readability
+        output_buffer.append(f"--- SECTION TITLE: {title} ---")
+        output_buffer.append(content)
+        output_buffer.append("\n" + "-" * 40 + "\n")
 
     return "\n".join(output_buffer)
