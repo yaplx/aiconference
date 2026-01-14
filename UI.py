@@ -11,9 +11,9 @@ load_dotenv()
 
 if "processing" not in st.session_state: st.session_state.processing = False
 if "generated_reports" not in st.session_state: st.session_state.generated_reports = None
+if "csv_string" not in st.session_state: st.session_state.csv_string = None
 
 
-# --- Password & API Key Logic ---
 def check_password():
     if "APP_PASSWORD" in st.secrets:
         secret_password = st.secrets["APP_PASSWORD"]
@@ -24,10 +24,8 @@ def check_password():
     user_input = st.text_input("🔑 Enter Access Password", type="password")
     if user_input == secret_password:
         return True
-    elif user_input == "":
-        st.warning("Please enter password."); return False
     else:
-        st.error("❌ Incorrect password"); return False
+        return False
 
 
 if not check_password(): st.stop()
@@ -37,15 +35,13 @@ if "OPENAI_API_KEY" in st.secrets:
     api_key = st.secrets["OPENAI_API_KEY"]
 elif os.getenv("OPENAI_API_KEY"):
     api_key = os.getenv("OPENAI_API_KEY")
-
 if not api_key: st.error("🚨 API Key not found!"); st.stop()
+
 client = backend.get_openai_client(api_key)
 
 # === 2. UI INPUTS ===
 st.title("⚖️ AI Conference Reviewer")
 
-# NEW: Optional Conference Target
-# We add a default "Optional" choice.
 conference_options = [
     "(Optional) General Quality Check",
     "CVPR (Computer Vision)",
@@ -55,20 +51,12 @@ conference_options = [
     "IROS (Robotics)",
     "Custom..."
 ]
+selected_option = st.selectbox("Target Conference", conference_options, disabled=st.session_state.processing)
 
-selected_option = st.selectbox(
-    "Target Conference (for Relevance Check)",
-    conference_options,
-    disabled=st.session_state.processing
-)
-
-# Logic to handle the selection
-target_conference = "General Academic Standards"  # Default fallback
-
+target_conference = "General Academic Standards"
 if selected_option == "Custom...":
     user_custom = st.text_input("Enter Conference Name:", disabled=st.session_state.processing)
-    if user_custom.strip():
-        target_conference = user_custom
+    if user_custom.strip(): target_conference = user_custom
 elif selected_option != "(Optional) General Quality Check":
     target_conference = selected_option
 
@@ -81,74 +69,103 @@ if uploaded_files and not st.session_state.processing:
     if st.button(f"Start Review Process"):
         st.session_state.processing = True
         st.session_state.generated_reports = None
+        st.session_state.csv_string = None
         st.rerun()
 
 if st.session_state.processing and uploaded_files:
     main_progress = st.progress(0)
     temp_reports = []
 
+    # Container for CSV Data (passed to backend later)
+    batch_results_data = []
+
     for file_index, uploaded_file in enumerate(uploaded_files):
         main_progress.progress(file_index / len(uploaded_files))
         st.divider()
         st.subheader(f"📄 File: {uploaded_file.name}")
 
-        # Log the conference being checked against
-        report_log = f"REVIEW REPORT\nPaper: {uploaded_file.name}\nTarget Standards: {target_conference}\n\n"
+        report_log = f"REVIEW REPORT\nPaper: {uploaded_file.name}\nTarget: {target_conference}\n\n"
 
-        # 1. PARSE SECTIONS
+        # 1. PARSE
         with st.spinner("Extracting Structure..."):
             sections_list = backend.extract_sections_visual(uploaded_file)
             sections_dict = {sec['title']: sec['content'] for sec in sections_list}
+            abstract_text = sections_dict.get("ABSTRACT", sections_list[0]['content'] if sections_list else "")
 
-            # Find Abstract for First Pass
-            abstract_text = ""
-            if "ABSTRACT" in sections_dict:
-                abstract_text = sections_dict["ABSTRACT"]
-            elif len(sections_list) > 0:
-                abstract_text = sections_list[0]['content']  # Fallback to first section
+        # 2. FIRST PASS
+        is_rejected = False
+        with st.spinner(f"First Pass ({target_conference})..."):
+            first_pass = backend.evaluate_first_pass(client, uploaded_file.name, abstract_text, target_conference)
+            report_log += f"--- FIRST PASS ---\n{first_pass}\n\n"
+
+            if "REJECT" in first_pass:
+                is_rejected = True
+                st.error("❌ REJECTED")
+                st.write(first_pass)
+
+                # CSV DATA (RED)
+                reason = first_pass.split("REASON:")[1].strip() if "REASON:" in first_pass else "First Pass Reject"
+                batch_results_data.append({
+                    "filename": uploaded_file.name,
+                    "decision": "REJECT",
+                    "color": "RED",
+                    "notes": reason
+                })
+
             else:
-                abstract_text = "No text found."
+                st.success("✅ PROCEED")
+                with st.expander("Details"):
+                    st.write(first_pass)
 
-        # 2. FIRST PASS: DESK REJECT CHECK
-        with st.spinner(f"Running First Pass ({target_conference})..."):
-            first_pass_result = backend.evaluate_first_pass(client, uploaded_file.name, abstract_text,
-                                                            target_conference)
-            report_log += f"--- FIRST PASS CHECK ---\n{first_pass_result}\n\n"
+        # 3. SECOND PASS (If Proceed)
+        if not is_rejected:
+            st.write("Analyzing sections...")
+            if show_visuals: tabs = st.tabs([k for k in sections_dict.keys()])
 
-            # Show Result in UI
-            if "REJECT" in first_pass_result:
-                st.error("❌ FIRST PASS: REJECTED")
-                st.write(first_pass_result)
+            paper_suggestions = []
 
-                # Generate partial report and skip to next file
-                pdf_bytes = backend.create_pdf_report(report_log)
-                temp_reports.append((f"{uploaded_file.name}_REJECTED.pdf", pdf_bytes))
-                continue
+            for i, (name, content) in enumerate(sections_dict.items()):
+                feedback = backend.generate_section_review(client, name, content, uploaded_file.name)
+                report_log += f"\n--- SECTION: {name} ---\n{feedback}\n"
+
+                if "ACCEPT WITH SUGGESTIONS" in feedback:
+                    if "**FLAGGED ISSUES (If any):**" in feedback:
+                        raw = feedback.split("**FLAGGED ISSUES (If any):**")[1]
+                        clean = raw.split("\n\n")[0].strip()
+                        if clean and clean != "(None)":
+                            paper_suggestions.append(f"[{name}]: {clean}")
+
+                if show_visuals:
+                    with tabs[i]: st.markdown(feedback)
+
+            # CSV DATA (YELLOW vs GREEN)
+            if paper_suggestions:
+                combined_notes = "; ".join(paper_suggestions).replace("\n", " ")
+                batch_results_data.append({
+                    "filename": uploaded_file.name,
+                    "decision": "PROCEED (With Suggestions)",
+                    "color": "YELLOW",
+                    "notes": combined_notes
+                })
             else:
-                st.success("✅ FIRST PASS: PROCEED")
-                with st.expander("See First Pass Details"):
-                    st.write(first_pass_result)
+                batch_results_data.append({
+                    "filename": uploaded_file.name,
+                    "decision": "PROCEED (Clean)",
+                    "color": "GREEN",
+                    "notes": "No major issues."
+                })
 
-        # 3. SECOND PASS: SECTION REVIEW
-        st.write("running detailed section analysis...")
-        if show_visuals:
-            tabs = st.tabs([k for k in sections_dict.keys()])
-
-        for i, (name, content) in enumerate(sections_dict.items()):
-            feedback = backend.generate_section_review(client, name, content, uploaded_file.name)
-
-            report_log += f"\n--- SECTION: {name} ---\n{feedback}\n"
-
-            if show_visuals:
-                with tabs[i]:
-                    st.markdown(feedback)
-
-        # Finalize PDF
+        # Generate PDF
         pdf_bytes = backend.create_pdf_report(report_log)
-        temp_reports.append((f"{uploaded_file.name}_REVIEW.pdf", pdf_bytes))
+        fname_suffix = "REJECTED" if is_rejected else "REVIEW"
+        temp_reports.append((f"{uploaded_file.name}_{fname_suffix}.pdf", pdf_bytes))
+
+    # --- FINAL: GENERATE CSV VIA BACKEND ---
+    if len(uploaded_files) > 1:
+        st.session_state.csv_string = backend.create_batch_csv(batch_results_data)
 
     main_progress.progress(1.0)
-    st.success("All processing complete!")
+    st.success("Complete!")
     st.session_state.generated_reports = temp_reports
     st.session_state.processing = False
     st.rerun()
@@ -156,20 +173,30 @@ if st.session_state.processing and uploaded_files:
 # === 4. DOWNLOADS ===
 if st.session_state.generated_reports:
     st.write("---")
-    st.subheader("📥 Download Reviews")
+    st.subheader("📥 Downloads")
 
+    # CSV Download
+    if st.session_state.csv_string:
+        st.download_button(
+            "📊 Download Batch Summary (CSV)",
+            st.session_state.csv_string,
+            "EasyChair_Summary.csv",
+            "text/csv"
+        )
+
+    # PDF Download
     reports = st.session_state.generated_reports
     if len(reports) == 1:
-        fname, fbytes = reports[0]
-        st.download_button(f"Download {fname}", fbytes, file_name=fname)
+        f, b = reports[0]
+        st.download_button(f"Download PDF ({f})", b, f)
     else:
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zf:
-            for fname, fdata in reports:
-                zf.writestr(fname, fdata)
-        zip_buffer.seek(0)
-        st.download_button("Download All (ZIP)", zip_buffer, file_name="Reviews.zip")
+        z_buf = io.BytesIO()
+        with zipfile.ZipFile(z_buf, "w") as zf:
+            for f, b in reports: zf.writestr(f, b)
+        z_buf.seek(0)
+        st.download_button("📦 Download All PDFs (ZIP)", z_buf, "Reviews.zip", "application/zip")
 
-    if st.button("Start New Review"):
+    if st.button("New Review"):
         st.session_state.generated_reports = None
+        st.session_state.csv_string = None
         st.rerun()
