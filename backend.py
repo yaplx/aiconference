@@ -3,7 +3,6 @@ import re
 import os
 from openai import OpenAI
 from fpdf import FPDF
-from collections import Counter
 
 
 # --- 1. INITIALIZATION ---
@@ -11,137 +10,156 @@ def get_openai_client(api_key):
     return OpenAI(api_key=api_key)
 
 
-# --- 2. ORIGINAL TEXT EXTRACTION (Legacy/Fallback) ---
-def extract_text_from_pdf_stream(uploaded_file):
+# --- 2. HELPERS FOR LOGIC ---
+def roman_to_int(s):
+    """
+    Converts Roman numerals (IV, ii, X) to integers.
+    Returns None if invalid.
+    """
+    roman_map = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
+    s = s.upper()
+    total = 0
+    prev_value = 0
+
     try:
-        file_bytes = uploaded_file.read()
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-
-        all_lines = []
-        for page in doc:
-            text = page.get_text("text")
-            raw_lines = text.split('\n')
-            for line in raw_lines:
-                clean = re.sub(r"^\\s*", "", line.strip())
-                if clean:
-                    all_lines.append(clean)
-
-        doc.close()
-        return all_lines
-    except Exception as e:
-        return []
+        for char in reversed(s):
+            value = roman_map[char]
+            if value < prev_value:
+                total -= value
+            else:
+                total += value
+            prev_value = value
+        return total
+    except KeyError:
+        return None
 
 
-# --- 3. NEW: VISUAL SECTIONING (Font Size + Bold) ---
-def _get_body_font_size(doc):
+def _is_header_candidate(line, expected_number):
     """
-    Scans the document to find the most common font size (Body Text).
-    Returns the body_size to set a baseline.
+    Checks if a line matches the user's strict rules:
+    1. Regex: Number (Arabic/Roman) + Opt Dot + Space + Phrase
+    2. Phrase Length < 25 chars
+    3. Phrase starts with Capital
+    4. Sequence: Number must == expected_number
     """
-    font_sizes = []
+    # Regex:
+    # Group 1: Number (Digits or Roman)
+    # Group 2: Optional Dot
+    # Group 3: Phrase (Must start with A-Z)
+    pattern = re.compile(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)\s+([A-Z].*)$")
 
-    # Scan max 5 pages to save time, or all if short
-    for i, page in enumerate(doc):
-        if i > 5: break
-        blocks = page.get_text("dict")["blocks"]
-        for block in blocks:
-            if "lines" in block:
-                for line in block["lines"]:
-                    for span in line["spans"]:
-                        # Round to nearest integer to handle float precision (11.98 -> 12)
-                        font_sizes.append(round(span["size"]))
+    match = pattern.match(line)
+    if not match:
+        return False, None, None
 
-    if not font_sizes:
-        return 12  # Default fallback
+    num_str = match.group(1)
+    phrase = match.group(3)
 
-    # The most common font size is likely the body text
-    return Counter(font_sizes).most_common(1)[0][0]
+    # RULE: Phrase length (excluding number) < 25 chars
+    if len(phrase) >= 25:
+        return False, None, None
+
+    # Resolve Number (Arabic or Roman)
+    current_val = 0
+    if num_str.isdigit():
+        current_val = int(num_str)
+    else:
+        val = roman_to_int(num_str)
+        if val is None:
+            return False, None, None
+        current_val = val
+
+    # RULE: Strict Sequence (Must match expected number)
+    if current_val == expected_number:
+        return True, num_str, phrase
+
+    return False, None, None
 
 
-def extract_sections_visual(uploaded_file):
+# --- 3. MAIN PARSING LOGIC ---
+def extract_sections_strict(uploaded_file):
     """
-    Extracts sections based on Font Size and Bold formatting.
-    Returns a list of dicts: [{'title': '...', 'content': '...'}]
+    Extracts text and splits it into sections based on strict numbering rules.
     """
-    # Reset file pointer and read bytes
+    # Read PDF content
     uploaded_file.seek(0)
     file_bytes = uploaded_file.read()
-
     doc = fitz.open(stream=file_bytes, filetype="pdf")
 
-    # 1. Get stats to know what "Normal" looks like
-    body_size = _get_body_font_size(doc)
-    header_threshold = body_size + 0.5  # Threshold: anything larger than body
-
-    sections = []
-    current_section = {"title": "Preamble/Introduction", "content": ""}
-
-    # Regex to catch numbered headers like "1. Introduction" or "2. RUNE"
-    header_pattern = re.compile(r"^\d+\.\s+[A-Z]")
-
+    all_lines = []
     for page in doc:
-        blocks = page.get_text("dict")["blocks"]
+        text = page.get_text("text")
+        raw_lines = text.split('\n')
+        for line in raw_lines:
+            clean = re.sub(r"^\s*", "", line.strip())
+            if clean:
+                all_lines.append(clean)
+    doc.close()
 
-        for block in blocks:
-            if "lines" not in block: continue
+    # Sectioning State Machine
+    sections = []
+    current_section = {"title": "Preamble (Unnumbered)", "content": ""}
 
-            for line in block["lines"]:
-                # Reconstruct line text from spans
-                line_text = "".join([s["text"] for s in line["spans"]]).strip()
-                if not line_text: continue
+    expected_number = 1  # We expect the first valid header to be 1 or I
 
-                # Check attributes (max size in line, and if any part is bold)
-                max_size = max([s["size"] for s in line["spans"]])
+    # Specific Unnumbered Headers allowed (Exceptions to the rule)
+    valid_unnumbered = ["ABSTRACT", "REFERENCES", "BIBLIOGRAPHY", "ACKNOWLEDGMENT"]
 
-                # Check for Bold (Flag 16 usually means bold, or font name contains 'Bold')
-                is_bold = any([(s["flags"] & 16) or "Bold" in s["font"] for s in line["spans"]])
+    for line in all_lines:
+        is_header, num_str, phrase = _is_header_candidate(line, expected_number)
 
-                # --- DECISION LOGIC: Is this a Header? ---
-                is_header = False
+        # Check for allowed unnumbered headers (Abstract, etc.)
+        is_special_header = False
+        upper_line = line.upper().replace(":", "").strip()
+        if upper_line in valid_unnumbered:
+            is_special_header = True
+            phrase = line  # Use original casing
 
-                # Rule 1: Font size is larger than body text
-                if max_size >= header_threshold:
-                    is_header = True
+        if is_header:
+            # SAVE PREVIOUS SECTION
+            if current_section["content"].strip():
+                sections.append(current_section)
 
-                # Rule 2: It is Bold AND matches a pattern (e.g. "2. RUNE")
-                elif is_bold and header_pattern.match(line_text):
-                    is_header = True
+            # START NEW NUMBERED SECTION
+            current_section = {
+                "title": f"{num_str}. {phrase}",
+                "content": ""
+            }
+            expected_number += 1  # Increment expectation (1 -> 2)
 
-                # Rule 3: Short bold lines (e.g. "Abstract", "References")
-                elif is_bold and len(line_text.split()) < 6:
-                    is_header = True
+        elif is_special_header:
+            # SAVE PREVIOUS
+            if current_section["content"].strip():
+                sections.append(current_section)
 
-                # --- Save Data ---
-                if is_header:
-                    # Save the previous section if it has content
-                    if current_section["content"].strip():
-                        sections.append(current_section)
+            # START NEW SPECIAL SECTION
+            current_section = {
+                "title": phrase,
+                "content": ""
+            }
+            # We do NOT increment expected_number for unnumbered sections
 
-                    # Start a new section
-                    current_section = {
-                        "title": line_text,
-                        "content": ""
-                    }
-                else:
-                    # Append text to current section
-                    current_section["content"] += line_text + " "
+        else:
+            # APPEND CONTENT
+            current_section["content"] += line + " "
 
-    # Append the final section
+    # Append final section
     if current_section["content"].strip():
         sections.append(current_section)
 
-    doc.close()
     return sections
 
 
-# --- 4. ORIGINAL: AI REVIEW GENERATION ---
+# --- 4. AI REVIEW GENERATION ---
 def generate_section_review(client, section_name, section_text, paper_title="Untitled Paper"):
     context_instruction = ""
-    if "METHOD" in section_name.upper():
+    upper_name = section_name.upper()
+
+    if "METHOD" in upper_name:
         context_instruction = "Check for: Reproducibility gaps, missing equations, or vague algorithm steps."
-    elif "RESULT" in section_name.upper():
+    elif "RESULT" in upper_name:
         context_instruction = "Check for: Missing baselines, unclear metrics, or claims not supported by data."
-    elif "INTRO" in section_name.upper():
+    elif "INTRO" in upper_name:
         context_instruction = "Check for: Clear research gap and contribution statement."
 
     prompt = f"""
@@ -174,7 +192,7 @@ def generate_section_review(client, section_name, section_text, paper_title="Unt
         """
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",  # Updated model name for better availability
+            model="gpt-4o",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
@@ -187,21 +205,45 @@ def create_pdf_report(full_report_text):
     pdf = FPDF()
     pdf.add_page()
 
-    # Fallback to standard font if custom font missing
-    font_family = "Arial"
+    font_family = "Arial"  # Standard fallback
 
     # --- TITLE ---
     pdf.set_font(font_family, 'B', 16)
     pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(3)
 
-    # --- MAIN CONTENT PARSER ---
-    pdf.set_font(font_family, '', 10)
+    # --- DISCLAIMER ---
+    pdf.set_font(font_family, '', 8)
+    pdf.set_text_color(100, 100, 100)
+    disclaimer_text = (
+        "DISCLAIMER: This is an automated assistant tool. "
+        "The Human Reviewer must verify all 'FOCUS POINTS' manually."
+    )
+    pdf.multi_cell(0, 4, txt=disclaimer_text, align='C')
+    pdf.ln(10)
 
-    # Simple line printing
+    # --- MAIN CONTENT ---
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font(font_family, '', 11)
+
     lines = full_report_text.split('\n')
     for line in lines:
-        clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
-        pdf.multi_cell(0, 5, clean)
+        clean_line = line.strip()
+
+        # Simple formatting logic
+        if "--- SECTION:" in clean_line:
+            pdf.ln(5)
+            pdf.set_font(font_family, 'B', 12)
+            pdf.cell(0, 10, txt=clean_line, ln=True)
+            pdf.set_font(font_family, '', 11)
+
+        elif "**RECOMMENDATION:**" in clean_line:
+            pdf.set_font(font_family, 'B', 11)
+            pdf.cell(0, 8, txt=clean_line.replace("**", ""), ln=True)
+            pdf.set_font(font_family, '', 11)
+
+        else:
+            safe_text = clean_line.encode('latin-1', 'replace').decode('latin-1')
+            pdf.multi_cell(0, 5, safe_text)
 
     return pdf.output(dest="S").encode("latin-1")
