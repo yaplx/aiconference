@@ -107,7 +107,7 @@ uploaded_files = st.file_uploader(
 )
 
 # --- SHOW DETAILS CHECKBOX ---
-show_details = st.checkbox("Show details on screen", value=True, disabled=st.session_state.processing)
+show_details = st.checkbox("Show details on screen (Enable Tabs)", value=True, disabled=st.session_state.processing)
 
 # --- ACTION BUTTON ---
 if uploaded_files and not st.session_state.processing:
@@ -129,90 +129,84 @@ if st.session_state.processing and uploaded_files:
         status_text.text(f"Processing file {i + 1}/{len(uploaded_files)}: {uploaded_file.name}...")
 
         try:
-            # Create a dedicated viewing area for this file if show_details is ON
+            # Create a dedicated viewing area for this file
             if show_details:
-                detail_container = st.expander(f"📄 Processing: {uploaded_file.name}", expanded=True)
+                file_container = st.expander(f"📄 Processing: {uploaded_file.name}", expanded=True)
             else:
-                detail_container = st.empty()  # Placeholder if not showing details
+                file_container = st.empty()
 
-            with detail_container:
-                # --- A. Extraction ---
-                if show_details: st.write("**Extracting Sections...**")
-
+            with file_container:
+                # --- A. Extraction & Setup ---
                 uploaded_file.seek(0)
                 sections = backend.extract_sections_visual(uploaded_file)
                 full_text_clean = backend.combine_section_content(sections)
 
-                # Show extracted headers horizontally (Navbar style)
-                section_titles = [s['title'] for s in sections]
+                # 1. CREATE TABS IMMEDIATELY
+                # We identify valid sections first so we can build the UI skeleton
+                valid_sections = [s for s in sections if
+                                  not any(skip in s['title'].upper() for skip in backend.SKIP_REVIEW_SECTIONS)]
+
+                # Create a list of tab names: "First Pass" + all valid section titles
+                tab_names = ["🔍 First Pass"] + [s['title'] for s in valid_sections]
+
                 if show_details:
-                    st.caption("Detected Sections: " + " | ".join(section_titles))
-                    st.divider()
+                    # Renders the clickable tabs immediately
+                    tabs = st.tabs(tab_names)
+                    first_pass_tab = tabs[0]
+                    section_tabs = tabs[1:]  # aligned with valid_sections list
+                else:
+                    first_pass_tab = st.empty()
+                    section_tabs = []
 
                 # --- B. First Pass (Desk Reject) ---
-                if show_details: st.write("**Performing First Pass (Desk Reject Check)...**")
-
-                first_pass = backend.evaluate_first_pass(
-                    client,
-                    uploaded_file.name,
-                    full_text_clean[:4000],
-                    target_conference
-                )
+                with first_pass_tab:
+                    st.info("Analyzing Abstract & Overall Structure...")
+                    first_pass = backend.evaluate_first_pass(
+                        client,
+                        uploaded_file.name,
+                        full_text_clean[:4000],
+                        target_conference
+                    )
+                    st.markdown(first_pass)
 
                 report_log = f"\n\n--- FIRST PASS ---\n{first_pass}\n\n"
-
                 decision = "PROCEED"
                 notes = "Standard review."
 
                 if "REJECT" in first_pass:
-                    if show_details:
-                        st.error("❌ Paper Rejected in First Pass.")
-                        st.write(first_pass)
-
                     decision = "REJECT"
                     report_log += "**Skipping detailed section review due to rejection.**"
                     if "REASON:" in first_pass:
                         notes = first_pass.split("REASON:")[1].strip()
-                else:
-                    if show_details:
-                        st.success("✅ First Pass Passed. Starting Section Analysis...")
 
+                    if show_details:
+                        st.error("❌ Rejected. Stopping analysis for this file.")
+                else:
                     # --- C. Second Pass (Section Review) ---
                     report_log += "--- SECTION ANALYSIS ---\n"
                     flagged_items = []
 
-                    # Iterate through sections and update UI live
-                    for sec in sections:
-                        sec_title = sec['title']
+                    # Process sections one by one, filling their respective tabs
+                    for idx, sec in enumerate(valid_sections):
+                        current_tab = section_tabs[idx]
 
-                        # Only review if it's not in the skip list
-                        clean_name = sec_title.upper().strip()
-                        if any(skip in clean_name for skip in backend.SKIP_REVIEW_SECTIONS):
-                            continue
+                        with current_tab:
+                            with st.spinner(f"Analyzing {sec['title']}..."):
+                                feedback = backend.generate_section_review(
+                                    client,
+                                    sec['title'],
+                                    sec['content'],
+                                    uploaded_file.name
+                                )
 
-                        # Visual indicator of current work
-                        if show_details:
-                            st.write(f"Analyzing {sec_title}...")
+                            if feedback:
+                                st.markdown(feedback)  # Show result in tab
+                                report_log += f"\n--- SECTION: {sec['title']} ---\n{feedback}\n"
 
-                        feedback = backend.generate_section_review(
-                            client,
-                            sec_title,
-                            sec['content'],
-                            uploaded_file.name
-                        )
-
-                        if feedback:
-                            # Append to full report
-                            report_log += f"\n--- SECTION: {sec_title} ---\n{feedback}\n"
-
-                            # Update UI with the result immediately
-                            if show_details:
-                                st.markdown(f"#### {sec_title}")
-                                st.markdown(feedback)
-                                st.divider()
-
-                            if "FLAGGED ISSUES" in feedback and "(None)" not in feedback:
-                                flagged_items.append(sec_title)
+                                if "FLAGGED ISSUES" in feedback and "(None)" not in feedback:
+                                    flagged_items.append(sec['title'])
+                            else:
+                                st.warning("No feedback generated.")
 
                     if flagged_items:
                         decision = "Accept w/ Suggestions"
@@ -270,8 +264,6 @@ if st.session_state.results:
     st.subheader("📄 Individual Files")
 
     for res in results:
-        # Just a simple expander for the final download link now,
-        # since the detailed view happened during processing.
         with st.expander(f"{res['filename']} - [{res['decision']}]"):
             col_a, col_b = st.columns([1, 3])
 
@@ -286,7 +278,7 @@ if st.session_state.results:
             with col_b:
                 st.info(f"**Notes:** {res['notes']}")
 
-            # Final text review optional if they want to see it again
+            # Optional: Final text view
             st.text_area("Final Report Text", res['report_text'], height=200)
 
     if st.button("Start New Review"):
