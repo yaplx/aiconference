@@ -32,6 +32,15 @@ SKIP_REVIEW_SECTIONS = [
     "DECLARATION"
 ]
 
+# Words that indicate a line is a Caption, not a Section Header
+IGNORE_CAPTION_KEYWORDS = [
+    "FIGURE", "FIG", "FIG.",
+    "TABLE", "TAB", "TAB.",
+    "IMAGE", "IMG", "IMG.",
+    "CHART", "GRAPH", "DIAGRAM",
+    "EQ", "EQUATION"
+]
+
 
 # --- 2. INITIALIZATION ---
 def get_openai_client(api_key):
@@ -67,7 +76,17 @@ def _parse_header_components(text):
 
 
 def _is_valid_numbered_header(num_str, phrase, expected_number):
+    # 1. Check Length
     if len(phrase) >= 30: return False
+
+    # 2. Check for Caption Keywords (Table, Figure, etc.)
+    # We check if the phrase starts with any ignored keyword (e.g. "Figure 1...")
+    clean_phrase = phrase.upper().strip()
+    for keyword in IGNORE_CAPTION_KEYWORDS:
+        if clean_phrase.startswith(keyword):
+            return False
+
+    # 3. Check Sequence
     current_val = 0
     if num_str.isdigit():
         current_val = int(num_str)
@@ -75,6 +94,7 @@ def _is_valid_numbered_header(num_str, phrase, expected_number):
         val = roman_to_int(num_str)
         if val is None: return False
         current_val = val
+
     return current_val == expected_number
 
 
@@ -155,7 +175,7 @@ def extract_sections_visual(uploaded_file):
     return sections
 
 
-# --- 5. FIRST PASS EVALUATION (UPDATED PROMPT) ---
+# --- 5. FIRST PASS EVALUATION ---
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
     prompt = f"""
     You are a reviewer assistant of the conference: "{conference_name}".
@@ -188,7 +208,7 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
         return f"Error: {str(e)}"
 
 
-# --- 6. SECTION REVIEW (UPDATED PROMPT WITH FOCUS) ---
+# --- 6. SECTION REVIEW ---
 def generate_section_review(client, section_name, section_text, paper_title):
     clean_name = section_name.upper().strip()
     clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
@@ -196,7 +216,6 @@ def generate_section_review(client, section_name, section_text, paper_title):
     if clean_name in SKIP_REVIEW_SECTIONS or section_name.upper() in SKIP_REVIEW_SECTIONS:
         return None
 
-    # --- ADD SECTION-SPECIFIC FOCUS ---
     section_focus = ""
     if "METHOD" in clean_name:
         section_focus = "Focus on: Reproducibility, mathematical soundness, and clarity of the algorithm steps."
