@@ -77,7 +77,7 @@ def _is_header_candidate(line, expected_number):
 
 
 # --- 3. MAIN PARSING LOGIC ---
-def extract_sections_strict(uploaded_file):
+def extract_sections_visual(uploaded_file):
     """
     Extracts text and splits it into sections based on strict numbering rules.
     """
