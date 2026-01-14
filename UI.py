@@ -1,238 +1,194 @@
 import streamlit as st
-import os
+import backend
 import zipfile
 import io
-from dotenv import load_dotenv
-import backend
+import pandas as pd
 
-# === 1. PAGE CONFIG & AUTHENTICATION ===
-st.set_page_config(page_title="Conference Desk Reviewer", page_icon="⚖️")
-load_dotenv()
+# ==========================================
+# PAGE CONFIGURATION
+# ==========================================
+st.set_page_config(
+    page_title="AI Conference Reviewer",
+    page_icon="📑",
+    layout="wide"
+)
 
-if "processing" not in st.session_state: st.session_state.processing = False
-if "generated_reports" not in st.session_state: st.session_state.generated_reports = None
-if "csv_string" not in st.session_state: st.session_state.csv_string = None
-if "structure_debug" not in st.session_state: st.session_state.structure_debug = None
+# ==========================================
+# SIDEBAR: CONFIG & API KEY
+# ==========================================
+with st.sidebar:
+    st.header("⚙️ Configuration")
+    api_key = st.text_input("OpenAI API Key", type="password")
 
-
-def check_password():
-    if "APP_PASSWORD" in st.secrets:
-        secret_password = st.secrets["APP_PASSWORD"]
-    elif os.getenv("APP_PASSWORD"):
-        secret_password = os.getenv("APP_PASSWORD")
-    else:
-        return True
-    user_input = st.text_input("🔑 Enter Access Password", type="password")
-    if user_input == secret_password:
-        return True
-    else:
-        return False
-
-
-if not check_password(): st.stop()
-
-api_key = None
-if "OPENAI_API_KEY" in st.secrets:
-    api_key = st.secrets["OPENAI_API_KEY"]
-elif os.getenv("OPENAI_API_KEY"):
-    api_key = os.getenv("OPENAI_API_KEY")
-if not api_key: st.error("🚨 API Key not found!"); st.stop()
-
-client = backend.get_openai_client(api_key)
-
-# === 2. UI INPUTS ===
-st.title("⚖️ AI Conference Reviewer")
-
-# --- UPDATED CONFERENCE LIST ---
-conference_options = [
-    "General Quality Check",
-    "Learning Sciences, Educational Neuroscience, and Computer-supported Collaborative Learning",
-    "Mobile, Ubiquitous & Contextual Learning",
-    "Joyful Learning, Educational Games, and Digital Toys",
-    "Technology Applications in Higher Education and Adult Learning, Teacher Professional Development",
-    "Technology-enhanced Language and Humanities Learning",
-    "Artificial Intelligence in Education Applications and Practices, Intelligent Learning Environments",
-    "Learning Analytics and Learning Assessment",
-    "STEM and Maker Education",
-    "Educational Technology: Innovations, Policies & Practice",
-    "Custom..."
-]
-
-selected_option = st.selectbox("Target Conference Track", conference_options, disabled=st.session_state.processing)
-
-# Logic to handle the selection
-target_conference = "General Academic Standards"  # Default fallback
-
-if selected_option == "Custom...":
-    user_custom = st.text_input("Enter Conference Name:", disabled=st.session_state.processing)
-    if user_custom.strip(): target_conference = user_custom
-elif selected_option != "General Quality Check":
-    target_conference = selected_option
-
-uploaded_files = st.file_uploader("Upload PDF(s)", type="pdf", accept_multiple_files=True,
-                                  disabled=st.session_state.processing)
-show_visuals = st.checkbox("Show details on screen", value=True, disabled=st.session_state.processing)
-
-# === 3. BUTTONS (REVIEW VS TEST) ===
-col1, col2 = st.columns(2)
-
-with col1:
-    if uploaded_files and not st.session_state.processing:
-        if st.button(f"🚀 Start Review Process"):
-            st.session_state.processing = True
-            st.session_state.generated_reports = None
-            st.session_state.csv_string = None
-            st.session_state.structure_debug = None  # Clear debug
-            st.rerun()
-
-with col2:
-    if uploaded_files and not st.session_state.processing:
-        if st.button("🧪 Test Structure Only (No AI)"):
-            st.session_state.structure_debug = []
-            for f in uploaded_files:
-                sections = backend.extract_sections_visual(f)
-                st.session_state.structure_debug.append((f.name, sections))
-            st.rerun()
-
-# === 4. MODE: STRUCTURE TEST ===
-if st.session_state.structure_debug:
     st.divider()
-    st.subheader("🛠️ Structure Detection Test (No AI cost)")
-    for fname, sections in st.session_state.structure_debug:
-        st.markdown(f"**📄 {fname}** - Detected {len(sections)} sections")
-        for sec in sections:
-            with st.expander(f"{sec['title']}"):
-                st.caption(sec['content'][:300] + "...")
 
-    if st.button("Clear Test Results"):
-        st.session_state.structure_debug = None
-        st.rerun()
+    mode = st.radio(
+        "Processing Mode",
+        ["AI Analysis (Standard)", "Raw Sectioning Check (Debug)"],
+        help="Select 'AI Analysis' for full review. Select 'Raw Sectioning' to just see how the code splits the PDF without calling GPT."
+    )
 
-# === 5. MODE: FULL AI PROCESSING ===
-if st.session_state.processing and uploaded_files:
-    main_progress = st.progress(0)
-    temp_reports = []
-    batch_results_data = []
+    st.info("Upload your PDF(s) in the main window.")
 
-    for file_index, uploaded_file in enumerate(uploaded_files):
-        main_progress.progress(file_index / len(uploaded_files))
-        st.divider()
-        st.subheader(f"📄 File: {uploaded_file.name}")
 
-        report_log = f"REVIEW REPORT\nPaper: {uploaded_file.name}\nTarget: {target_conference}\n\n"
+# ==========================================
+# HELPER: ZIP CREATION
+# ==========================================
+def create_zip_of_reports(results_list):
+    """
+    Takes a list of dictionaries [{'filename':..., 'pdf_bytes':...}, ...]
+    and returns a ZIP file as bytes.
+    """
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for item in results_list:
+            # Add PDF report
+            pdf_name = f"Report_{item['filename']}.pdf"
+            zip_file.writestr(pdf_name, item['pdf_bytes'])
 
-        # 1. PARSE
-        with st.spinner("Extracting Structure..."):
-            sections_list = backend.extract_sections_visual(uploaded_file)
-            sections_dict = {sec['title']: sec['content'] for sec in sections_list}
-            abstract_text = sections_dict.get("ABSTRACT", sections_list[0]['content'] if sections_list else "")
+        # Add Summary CSV
+        csv_data = backend.create_batch_csv(results_list)
+        zip_file.writestr("Batch_Summary.csv", csv_data)
 
-        # 2. FIRST PASS
-        is_rejected = False
-        with st.spinner(f"First Pass ({target_conference})..."):
-            first_pass = backend.evaluate_first_pass(client, uploaded_file.name, abstract_text, target_conference)
-            report_log += f"--- FIRST PASS ---\n{first_pass}\n\n"
+    return zip_buffer.getvalue()
 
-            if "REJECT" in first_pass:
-                is_rejected = True
-                st.error("❌ REJECTED")
-                st.write(first_pass)
 
-                reason = first_pass.split("REASON:")[1].strip() if "REASON:" in first_pass else "First Pass Reject"
-                batch_results_data.append({
-                    "filename": uploaded_file.name,
-                    "decision": "Rejected",
-                    "notes": reason
-                })
+# ==========================================
+# MAIN INTERFACE
+# ==========================================
+st.title("📑 AI Paper Reviewer & Sectioner")
 
-            else:
-                st.success("✅ PROCEED")
-                with st.expander("Details"):
-                    st.write(first_pass)
+if not api_key:
+    st.warning("⚠️ Please enter your OpenAI API Key in the sidebar to proceed.")
+else:
+    client = backend.get_openai_client(api_key)
 
-        # 3. SECOND PASS
-        if not is_rejected:
-            st.write("Analyzing sections...")
-            if show_visuals: tabs = st.tabs([k for k in sections_dict.keys()])
+    # File Uploader (Accepts Multiple)
+    uploaded_files = st.file_uploader(
+        "Upload Conference Papers (PDF)",
+        type=["pdf"],
+        accept_multiple_files=True
+    )
 
-            paper_suggestions = []
+    if uploaded_files:
+        start_btn = st.button(f"Start Processing ({len(uploaded_files)} files)")
 
-            for i, (name, content) in enumerate(sections_dict.items()):
-                feedback = backend.generate_section_review(client, name, content, uploaded_file.name)
+        if start_btn:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
-                if feedback:
-                    report_log += f"\n--- SECTION: {name} ---\n{feedback}\n"
+            results = []
 
-                    if "ACCEPT WITH SUGGESTIONS" in feedback:
-                        if "**FLAGGED ISSUES (If any):**" in feedback:
-                            raw = feedback.split("**FLAGGED ISSUES (If any):**")[1]
-                            clean = raw.split("\n\n")[0].strip()
-                            if clean and clean != "(None)":
-                                paper_suggestions.append(f"[{name}]: {clean}")
+            # --- PROCESSING LOOP ---
+            for i, uploaded_file in enumerate(uploaded_files):
+                status_text.text(f"Processing file {i + 1}/{len(uploaded_files)}: {uploaded_file.name}...")
 
-                    if show_visuals:
-                        with tabs[i]: st.markdown(feedback)
-                else:
-                    if show_visuals:
-                        with tabs[i]: st.caption(f"Skipped {name}")
+                try:
+                    # 1. READ FILE CONTENT
+                    # Reset pointer just in case
+                    uploaded_file.seek(0)
 
-            if paper_suggestions:
-                combined_notes = "; ".join(paper_suggestions).replace("\n", " ")
-                batch_results_data.append({
-                    "filename": uploaded_file.name,
-                    "decision": "Accept with Suggestion",
-                    "notes": combined_notes
-                })
-            else:
-                batch_results_data.append({
-                    "filename": uploaded_file.name,
-                    "decision": "Accept",
-                    "notes": "No major issues."
-                })
+                    # 2. PROCESS BASED ON MODE
+                    if mode == "Raw Sectioning Check (Debug)":
+                        # --- DEBUG MODE (NO AI) ---
+                        report_text = backend.get_raw_sectioned_text(uploaded_file)
+                        decision = "N/A (Raw View)"
+                        notes = "Raw sectioning output only."
 
-        # Generate PDF
-        pdf_bytes = backend.create_pdf_report(report_log)
-        clean_name = uploaded_file.name.replace(".pdf", "").replace(".PDF", "")
-        final_pdf_name = f"{clean_name}_reviews.pdf"
-        temp_reports.append((final_pdf_name, pdf_bytes))
+                    else:
+                        # --- STANDARD AI MODE ---
+                        # A. Extract Sections
+                        sections = backend.extract_sections_visual(uploaded_file)
 
-    # --- CSV GENERATION ---
-    if len(uploaded_files) > 1:
-        st.session_state.csv_string = backend.create_batch_csv(batch_results_data)
+                        # B. First Pass (Desk Reject)
+                        # We need abstract text. Assuming abstract is in the first section or early text.
+                        # For simplicity, let's grab the first 4000 chars of the whole doc for the prompt.
+                        uploaded_file.seek(0)
+                        full_doc_text = backend.debug_get_all_section_text(uploaded_file)  # Reuse helper to get text
 
-    main_progress.progress(1.0)
-    st.success("Complete!")
-    st.session_state.generated_reports = temp_reports
-    st.session_state.processing = False
-    st.rerun()
+                        first_pass_result = backend.evaluate_first_pass(
+                            client,
+                            paper_title=uploaded_file.name,
+                            abstract_text=full_doc_text[:4000],
+                            conference_name="General Conference"
+                        )
 
-# === 6. DOWNLOADS ===
-if st.session_state.generated_reports:
-    st.write("---")
-    st.subheader("📥 Downloads")
+                        full_report = f"### File: {uploaded_file.name}\n\n"
+                        full_report += f"#### Pass 1: Desk Reject Check\n{first_pass_result}\n\n"
 
-    # CSV Download
-    if st.session_state.csv_string:
-        st.download_button(
-            "📊 Download Batch Summary (CSV)",
-            st.session_state.csv_string,
-            "All_Summary.csv",
-            "text/csv"
-        )
+                        # Determine Decision for CSV
+                        if "REJECT" in first_pass_result:
+                            decision = "REJECT"
+                            full_report += "**Skipping Section Review due to Reject status.**"
+                        else:
+                            decision = "PROCEED"
+                            # C. Second Pass (Section Review)
+                            full_report += "#### Pass 2: Section Analysis\n"
+                            for sec in sections:
+                                review = backend.generate_section_review(
+                                    client,
+                                    sec['title'],
+                                    sec['content'],
+                                    uploaded_file.name
+                                )
+                                if review:
+                                    full_report += f"\n--- SECTION: {sec['title']} ---\n{review}\n"
 
-    # PDF Download
-    reports = st.session_state.generated_reports
-    if len(reports) == 1:
-        f, b = reports[0]
-        st.download_button(f"Download PDF ({f})", b, f)
-    else:
-        z_buf = io.BytesIO()
-        with zipfile.ZipFile(z_buf, "w") as zf:
-            for f, b in reports: zf.writestr(f, b)
-        z_buf.seek(0)
-        st.download_button("📦 Download All PDFs (ZIP)", z_buf, "All_Reviewed.zip", "application/zip")
+                        report_text = full_report
+                        notes = "AI Analysis Completed."
 
-    if st.button("New Review"):
-        st.session_state.generated_reports = None
-        st.session_state.csv_string = None
-        st.rerun()
+                    # 3. GENERATE PDF (RAM)
+                    pdf_bytes = backend.create_pdf_report(report_text)
+
+                    # 4. STORE RESULT
+                    results.append({
+                        'filename': uploaded_file.name,
+                        'decision': decision,
+                        'notes': notes,
+                        'report_text': report_text,
+                        'pdf_bytes': pdf_bytes
+                    })
+
+                except Exception as e:
+                    st.error(f"Error processing {uploaded_file.name}: {str(e)}")
+
+                # Update Progress
+                progress_bar.progress((i + 1) / len(uploaded_files))
+
+            status_text.text("Processing Complete!")
+            st.success("All files processed.")
+
+            # --- DISPLAY RESULTS & DOWNLOADS ---
+            st.divider()
+
+            # CASE 1: MULTIPLE FILES (BATCH)
+            if len(results) > 1:
+                st.subheader("📦 Batch Download")
+
+                # 1. Summary Table
+                df = pd.DataFrame(results)[['filename', 'decision', 'notes']]
+                st.dataframe(df)
+
+                # 2. ZIP Download
+                zip_data = create_zip_of_reports(results)
+                st.download_button(
+                    label="⬇️ Download All Reports (ZIP)",
+                    data=zip_data,
+                    file_name="Batch_Review_Reports.zip",
+                    mime="application/zip"
+                )
+
+            # CASE 2: SINGLE FILE (or View Individual in Batch)
+            st.subheader("📄 Individual Reports")
+            for res in results:
+                with st.expander(f"Report: {res['filename']} ({res['decision']})"):
+                    # Download Button for this specific PDF
+                    st.download_button(
+                        label=f"⬇️ Download PDF Report for {res['filename']}",
+                        data=res['pdf_bytes'],
+                        file_name=f"Report_{res['filename']}.pdf",
+                        mime="application/pdf"
+                    )
+
+                    # Show Text Preview
+                    st.text_area("Report Content Preview:", res['report_text'], height=300)
