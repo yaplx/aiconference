@@ -43,15 +43,19 @@ client = backend.get_openai_client(api_key)
 st.title("⚖️ AI Conference Reviewer")
 
 conference_options = [
-    "(Optional) General Quality Check",
-    "CVPR (Computer Vision)",
-    "ICRA (Robotics)",
-    "NeurIPS (AI/ML)",
-    "ACL (NLP)",
-    "IROS (Robotics)",
+    "General Quality Check",
+    "Learning Sciences, Educational Neuroscience, and Computer-supported Collaborative Learning",
+    "Mobile, Ubiquitous & Contextual Learning",
+    "Joyful Learning, Educational Games, and Digital Toys",
+    "Technology Applications in Higher Education and Adult Learning, Teacher Professional Development",
+    "Technology-enhanced Language and Humanities Learning",
+    "Artificial Intelligence in Education Applications and Practices, Intelligent Learning Environments",
+    "Learning Analytics and Learning Assessment",
+    "STEM and Maker Education",
+    "Educational Technology: Innovations, Policies & Practice",
     "Custom..."
 ]
-selected_option = st.selectbox("Target Conference", conference_options, disabled=st.session_state.processing)
+selected_option = st.selectbox("Target Conference Theme", conference_options, disabled=st.session_state.processing)
 
 target_conference = "General Academic Standards"
 if selected_option == "Custom...":
@@ -75,8 +79,6 @@ if uploaded_files and not st.session_state.processing:
 if st.session_state.processing and uploaded_files:
     main_progress = st.progress(0)
     temp_reports = []
-
-    # Container for CSV Data (passed to backend later)
     batch_results_data = []
 
     for file_index, uploaded_file in enumerate(uploaded_files):
@@ -103,12 +105,10 @@ if st.session_state.processing and uploaded_files:
                 st.error("❌ REJECTED")
                 st.write(first_pass)
 
-                # CSV DATA (RED)
                 reason = first_pass.split("REASON:")[1].strip() if "REASON:" in first_pass else "First Pass Reject"
                 batch_results_data.append({
                     "filename": uploaded_file.name,
-                    "decision": "REJECT",
-                    "color": "RED",
+                    "decision": "Rejected",  # <--- UPDATED LABEL
                     "notes": reason
                 })
 
@@ -117,7 +117,7 @@ if st.session_state.processing and uploaded_files:
                 with st.expander("Details"):
                     st.write(first_pass)
 
-        # 3. SECOND PASS (If Proceed)
+        # 3. SECOND PASS
         if not is_rejected:
             st.write("Analyzing sections...")
             if show_visuals: tabs = st.tabs([k for k in sections_dict.keys()])
@@ -126,41 +126,45 @@ if st.session_state.processing and uploaded_files:
 
             for i, (name, content) in enumerate(sections_dict.items()):
                 feedback = backend.generate_section_review(client, name, content, uploaded_file.name)
-                report_log += f"\n--- SECTION: {name} ---\n{feedback}\n"
 
-                if "ACCEPT WITH SUGGESTIONS" in feedback:
-                    if "**FLAGGED ISSUES (If any):**" in feedback:
-                        raw = feedback.split("**FLAGGED ISSUES (If any):**")[1]
-                        clean = raw.split("\n\n")[0].strip()
-                        if clean and clean != "(None)":
-                            paper_suggestions.append(f"[{name}]: {clean}")
+                if feedback:
+                    report_log += f"\n--- SECTION: {name} ---\n{feedback}\n"
 
-                if show_visuals:
-                    with tabs[i]: st.markdown(feedback)
+                    if "ACCEPT WITH SUGGESTIONS" in feedback:
+                        if "**FLAGGED ISSUES (If any):**" in feedback:
+                            raw = feedback.split("**FLAGGED ISSUES (If any):**")[1]
+                            clean = raw.split("\n\n")[0].strip()
+                            if clean and clean != "(None)":
+                                paper_suggestions.append(f"[{name}]: {clean}")
 
-            # CSV DATA (YELLOW vs GREEN)
+                    if show_visuals:
+                        with tabs[i]: st.markdown(feedback)
+                else:
+                    if show_visuals:
+                        with tabs[i]: st.caption(f"Skipped {name}")
+
+            # --- FINAL DECISION LOGIC ---
             if paper_suggestions:
                 combined_notes = "; ".join(paper_suggestions).replace("\n", " ")
                 batch_results_data.append({
                     "filename": uploaded_file.name,
-                    "decision": "PROCEED (With Suggestions)",
-                    "color": "YELLOW",
+                    "decision": "Accept with Suggestion",  # <--- UPDATED LABEL
                     "notes": combined_notes
                 })
             else:
                 batch_results_data.append({
                     "filename": uploaded_file.name,
-                    "decision": "PROCEED (Clean)",
-                    "color": "GREEN",
+                    "decision": "Accept",  # <--- UPDATED LABEL
                     "notes": "No major issues."
                 })
 
         # Generate PDF
         pdf_bytes = backend.create_pdf_report(report_log)
-        fname_suffix = "REJECTED" if is_rejected else "REVIEW"
-        temp_reports.append((f"{uploaded_file.name}_{fname_suffix}.pdf", pdf_bytes))
+        clean_name = uploaded_file.name.replace(".pdf", "").replace(".PDF", "")
+        final_pdf_name = f"{clean_name}_reviewed.pdf"
+        temp_reports.append((final_pdf_name, pdf_bytes))
 
-    # --- FINAL: GENERATE CSV VIA BACKEND ---
+    # --- CSV GENERATION ---
     if len(uploaded_files) > 1:
         st.session_state.csv_string = backend.create_batch_csv(batch_results_data)
 
@@ -180,7 +184,7 @@ if st.session_state.generated_reports:
         st.download_button(
             "📊 Download Batch Summary (CSV)",
             st.session_state.csv_string,
-            "EasyChair_Summary.csv",
+            "All_Summary.csv",
             "text/csv"
         )
 
@@ -194,7 +198,7 @@ if st.session_state.generated_reports:
         with zipfile.ZipFile(z_buf, "w") as zf:
             for f, b in reports: zf.writestr(f, b)
         z_buf.seek(0)
-        st.download_button("📦 Download All PDFs (ZIP)", z_buf, "Reviews.zip", "application/zip")
+        st.download_button("📦 Download All PDFs (ZIP)", z_buf, "All_Reviewed.zip", "application/zip")
 
     if st.button("New Review"):
         st.session_state.generated_reports = None

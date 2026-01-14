@@ -21,6 +21,17 @@ HEADER_MAP = {
     "DECLARATION": "DECLARATION"
 }
 
+SKIP_REVIEW_SECTIONS = [
+    "ABSTRACT",
+    "PREAMBLE",
+    "PREAMBLE/INTRODUCTION",
+    "REFERENCES",
+    "BIBLIOGRAPHY",
+    "ACKNOWLEDGMENT",
+    "APPENDIX",
+    "DECLARATION"
+]
+
 
 # --- 2. INITIALIZATION ---
 def get_openai_client(api_key):
@@ -179,6 +190,12 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 
 # --- 6. SECTION REVIEW ---
 def generate_section_review(client, section_name, section_text, paper_title):
+    clean_name = section_name.upper().strip()
+    clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
+
+    if clean_name in SKIP_REVIEW_SECTIONS or section_name.upper() in SKIP_REVIEW_SECTIONS:
+        return None
+
     prompt = f"""
     You are a Technical Reviewer.
     Paper: "{paper_title}"
@@ -239,29 +256,20 @@ def create_pdf_report(full_report_text):
     return pdf.output(dest="S").encode("latin-1")
 
 
-# --- 8. NEW: CSV BATCH GENERATOR ---
+# --- 8. CSV BATCH GENERATOR (Updated) ---
 def create_batch_csv(paper_results_list):
     """
-    Takes a list of dictionaries:
-    [
-      {
-        "filename": "paper1.pdf",
-        "decision": "REJECT" / "PROCEED (With Suggestions)" / "PROCEED (Clean)",
-        "color": "RED" / "YELLOW" / "GREEN",
-        "notes": "Irrelevant topic..." or "Check eq 3..."
-      },
-      ...
-    ]
-    Returns a CSV string.
+    Generates a simple CSV with 3 columns:
+    Filename | Status (Accept/Reject/Accept with Suggestion) | Notes
     """
     output = io.StringIO()
     writer = csv.writer(output)
 
     # Header
-    writer.writerow(["Filename", "Decision", "Color Code", "Focus Points / Reject Reason"])
+    writer.writerow(["Filename", "Decision", "Comments"])
 
     # Rows
     for p in paper_results_list:
-        writer.writerow([p['filename'], p['decision'], p['color'], p['notes']])
+        writer.writerow([p['filename'], p['decision'], p['notes']])
 
     return output.getvalue()
