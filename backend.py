@@ -290,7 +290,7 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION
+# 7. PDF GENERATION (UPDATED HEADER)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
     full_text_processed = full_report_text

@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import zipfile
 import io
+import time
 from dotenv import load_dotenv
 import backend
 
@@ -25,7 +26,6 @@ def check_password():
     else:
         return True  # No password set, allow access
 
-    # Original UI: Input in main area
     user_input = st.text_input("🔑 Enter Access Password", type="password")
     if user_input == secret_password:
         return True
@@ -59,11 +59,9 @@ def create_zip_of_reports(results_list):
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for item in results_list:
-            # Add PDF report
             pdf_name = f"Report_{item['filename']}.pdf"
             zip_file.writestr(pdf_name, item['pdf_bytes'])
 
-        # Add Summary CSV if available
         if results_list[0].get('decision') != "N/A":
             csv_data = backend.create_batch_csv(results_list)
             zip_file.writestr("Batch_Summary.csv", csv_data)
@@ -76,7 +74,7 @@ def create_zip_of_reports(results_list):
 # ==========================================
 st.title("⚖️ AI Conference Reviewer")
 
-# --- CONFERENCE SELECTION (Main Area) ---
+# --- CONFERENCE SELECTION ---
 target_conference = "General Academic Standards"
 conference_options = [
     "General Quality Check",
@@ -100,7 +98,7 @@ if selected_option == "Custom...":
 elif selected_option != "General Quality Check":
     target_conference = selected_option
 
-# --- FILE UPLOAD (Main Area) ---
+# --- FILE UPLOAD ---
 uploaded_files = st.file_uploader(
     "Upload PDF(s)",
     type="pdf",
@@ -111,7 +109,7 @@ uploaded_files = st.file_uploader(
 # --- SHOW DETAILS CHECKBOX ---
 show_details = st.checkbox("Show details on screen", value=True, disabled=st.session_state.processing)
 
-# --- ACTION BUTTON (Main Area) ---
+# --- ACTION BUTTON ---
 if uploaded_files and not st.session_state.processing:
     if st.button("🚀 Start AI Review"):
         st.session_state.processing = True
@@ -131,58 +129,96 @@ if st.session_state.processing and uploaded_files:
         status_text.text(f"Processing file {i + 1}/{len(uploaded_files)}: {uploaded_file.name}...")
 
         try:
-            # Reset file pointer
-            uploaded_file.seek(0)
-
-            # --- AI ANALYSIS ---
-
-            # 1. Extract Sections
-            sections = backend.extract_sections_visual(uploaded_file)
-
-            # Combine text for First Pass (replacing the old debug method)
-            full_text_clean = backend.combine_section_content(sections)
-
-            # 2. First Pass (Desk Reject)
-            first_pass = backend.evaluate_first_pass(
-                client,
-                uploaded_file.name,
-                full_text_clean[:4000],
-                target_conference
-            )
-
-            report_log = f"\n\n--- FIRST PASS ---\n{first_pass}\n\n"
-
-            decision = "PROCEED"
-            notes = "Standard review."
-
-            if "REJECT" in first_pass:
-                decision = "REJECT"
-                report_log += "**Skipping detailed section review due to rejection.**"
-                if "REASON:" in first_pass:
-                    notes = first_pass.split("REASON:")[1].strip()
+            # Create a dedicated viewing area for this file if show_details is ON
+            if show_details:
+                detail_container = st.expander(f"📄 Processing: {uploaded_file.name}", expanded=True)
             else:
-                # 3. Second Pass (Section Review)
-                report_log += "--- SECTION ANALYSIS ---\n"
-                flagged_items = []
+                detail_container = st.empty()  # Placeholder if not showing details
 
-                for sec in sections:
-                    feedback = backend.generate_section_review(
-                        client,
-                        sec['title'],
-                        sec['content'],
-                        uploaded_file.name
-                    )
-                    if feedback:
-                        report_log += f"\n--- SECTION: {sec['title']} ---\n{feedback}\n"
+            with detail_container:
+                # --- A. Extraction ---
+                if show_details: st.write("**Extracting Sections...**")
 
-                        if "FLAGGED ISSUES" in feedback and "(None)" not in feedback:
-                            flagged_items.append(sec['title'])
+                uploaded_file.seek(0)
+                sections = backend.extract_sections_visual(uploaded_file)
+                full_text_clean = backend.combine_section_content(sections)
 
-                if flagged_items:
-                    decision = "Accept w/ Suggestions"
-                    notes = f"Issues in: {', '.join(flagged_items)}"
+                # Show extracted headers horizontally (Navbar style)
+                section_titles = [s['title'] for s in sections]
+                if show_details:
+                    st.caption("Detected Sections: " + " | ".join(section_titles))
+                    st.divider()
+
+                # --- B. First Pass (Desk Reject) ---
+                if show_details: st.write("**Performing First Pass (Desk Reject Check)...**")
+
+                first_pass = backend.evaluate_first_pass(
+                    client,
+                    uploaded_file.name,
+                    full_text_clean[:4000],
+                    target_conference
+                )
+
+                report_log = f"\n\n--- FIRST PASS ---\n{first_pass}\n\n"
+
+                decision = "PROCEED"
+                notes = "Standard review."
+
+                if "REJECT" in first_pass:
+                    if show_details:
+                        st.error("❌ Paper Rejected in First Pass.")
+                        st.write(first_pass)
+
+                    decision = "REJECT"
+                    report_log += "**Skipping detailed section review due to rejection.**"
+                    if "REASON:" in first_pass:
+                        notes = first_pass.split("REASON:")[1].strip()
                 else:
-                    decision = "Accept"
+                    if show_details:
+                        st.success("✅ First Pass Passed. Starting Section Analysis...")
+
+                    # --- C. Second Pass (Section Review) ---
+                    report_log += "--- SECTION ANALYSIS ---\n"
+                    flagged_items = []
+
+                    # Iterate through sections and update UI live
+                    for sec in sections:
+                        sec_title = sec['title']
+
+                        # Only review if it's not in the skip list
+                        clean_name = sec_title.upper().strip()
+                        if any(skip in clean_name for skip in backend.SKIP_REVIEW_SECTIONS):
+                            continue
+
+                        # Visual indicator of current work
+                        if show_details:
+                            st.write(f"Analyzing {sec_title}...")
+
+                        feedback = backend.generate_section_review(
+                            client,
+                            sec_title,
+                            sec['content'],
+                            uploaded_file.name
+                        )
+
+                        if feedback:
+                            # Append to full report
+                            report_log += f"\n--- SECTION: {sec_title} ---\n{feedback}\n"
+
+                            # Update UI with the result immediately
+                            if show_details:
+                                st.markdown(f"#### {sec_title}")
+                                st.markdown(feedback)
+                                st.divider()
+
+                            if "FLAGGED ISSUES" in feedback and "(None)" not in feedback:
+                                flagged_items.append(sec_title)
+
+                    if flagged_items:
+                        decision = "Accept w/ Suggestions"
+                        notes = f"Issues in: {', '.join(flagged_items)}"
+                    else:
+                        decision = "Accept"
 
             report_text = report_log
 
@@ -234,6 +270,8 @@ if st.session_state.results:
     st.subheader("📄 Individual Files")
 
     for res in results:
+        # Just a simple expander for the final download link now,
+        # since the detailed view happened during processing.
         with st.expander(f"{res['filename']} - [{res['decision']}]"):
             col_a, col_b = st.columns([1, 3])
 
@@ -248,11 +286,9 @@ if st.session_state.results:
             with col_b:
                 st.info(f"**Notes:** {res['notes']}")
 
-            # Text Preview (Only shows if checkbox is checked)
-            if show_details:
-                st.text_area("Report Content:", res['report_text'], height=250)
+            # Final text review optional if they want to see it again
+            st.text_area("Final Report Text", res['report_text'], height=200)
 
-    # Reset Button
     if st.button("Start New Review"):
         st.session_state.results = None
         st.rerun()
