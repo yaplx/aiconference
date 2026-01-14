@@ -236,4 +236,14 @@ def create_pdf_report(full_report_text):
         clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
         if "--- SECTION:" in clean:
             pdf.ln(5)
-            pdf.set_font(font_family,
+            pdf.set_font(font_family, 'B', 12)
+            pdf.cell(0, 10, txt=clean, ln=True)
+            pdf.set_font(font_family, '', 11)
+        elif "**RECOMMENDATION:**" in clean:
+            pdf.set_font(font_family, 'B', 11)
+            pdf.cell(0, 8, txt=clean.replace("**", ""), ln=True)
+            pdf.set_font(font_family, '', 11)
+        else:
+            pdf.multi_cell(0, 5, clean)
+
+    return pdf.output(dest="S").encode("latin-1")
