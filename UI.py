@@ -108,6 +108,9 @@ uploaded_files = st.file_uploader(
     disabled=st.session_state.processing
 )
 
+# --- SHOW DETAILS CHECKBOX ---
+show_details = st.checkbox("Show details on screen", value=True, disabled=st.session_state.processing)
+
 # --- ACTION BUTTON (Main Area) ---
 if uploaded_files and not st.session_state.processing:
     if st.button("🚀 Start AI Review"):
@@ -136,15 +139,14 @@ if st.session_state.processing and uploaded_files:
             # 1. Extract Sections
             sections = backend.extract_sections_visual(uploaded_file)
 
-            # Get abstract for First Pass
-            uploaded_file.seek(0)
-            full_text_debug = backend.debug_get_all_section_text(uploaded_file)
+            # Combine text for First Pass (replacing the old debug method)
+            full_text_clean = backend.combine_section_content(sections)
 
             # 2. First Pass (Desk Reject)
             first_pass = backend.evaluate_first_pass(
                 client,
                 uploaded_file.name,
-                full_text_debug[:4000],
+                full_text_clean[:4000],
                 target_conference
             )
 
@@ -246,8 +248,9 @@ if st.session_state.results:
             with col_b:
                 st.info(f"**Notes:** {res['notes']}")
 
-            # Text Preview
-            st.text_area("Report Content:", res['report_text'], height=250)
+            # Text Preview (Only shows if checkbox is checked)
+            if show_details:
+                st.text_area("Report Content:", res['report_text'], height=250)
 
     # Reset Button
     if st.button("Start New Review"):

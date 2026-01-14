@@ -107,6 +107,18 @@ def _get_mapped_title(text):
     return None
 
 
+def combine_section_content(sections):
+    """
+    Helper to join all section content into a single string.
+    Used for the First Pass (Desk Reject) prompt.
+    """
+    full_text = []
+    for sec in sections:
+        full_text.append(f"--- {sec['title']} ---")
+        full_text.append(sec['content'])
+    return "\n".join(full_text)
+
+
 # ==============================================================================
 # 4. MAIN SECTIONING LOGIC
 # ==============================================================================
@@ -278,10 +290,9 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION (UPDATED: No Bottom Disclaimer)
+# 7. PDF GENERATION
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    # We use the text exactly as provided, without appending the bottom disclaimer
     full_text_processed = full_report_text
 
     pdf = FPDF()
@@ -305,7 +316,7 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(2)
 
-    # 2. Header Disclaimer (Gray, Small) - We KEEP this one
+    # 2. Header Disclaimer (Gray, Small)
     pdf.set_text_color(100, 100, 100)  # Gray
     pdf.set_font(font_family, '', 8)
     header_disclaimer = (
