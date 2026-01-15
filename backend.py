@@ -272,7 +272,7 @@ def generate_section_review(client, section_name, section_text, paper_title):
 # 7. PDF GENERATION (CRASH FIX)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    # 1. Sanitize basic text
+    # 1. Sanitize text (fix dashes/quotes/bolding)
     full_text_processed = sanitize_text_for_pdf(full_report_text)
 
     pdf = FPDF()
@@ -307,12 +307,12 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(2)
 
-    pdf.set_text_color(100, 100, 100)
+    pdf.set_text_color(100, 100, 100)  # Gray
     pdf.set_font(font_family, '', 8)
     pdf.multi_cell(0, 4, "DISCLAIMER: Automated tool. Verify manually.", align='C')
     pdf.ln(8)
 
-    pdf.set_text_color(0, 0, 0)
+    pdf.set_text_color(0, 0, 0)  # Black
     pdf.set_font(font_family, '', 14)
     pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
     pdf.ln(2)
