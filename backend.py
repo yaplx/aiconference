@@ -5,6 +5,7 @@ import io
 import os
 from openai import OpenAI
 from fpdf import FPDF
+import prompts  # <--- IMPORT THE NEW FILE
 
 # ==============================================================================
 # 1. CONFIGURATION & CONSTANTS
@@ -118,15 +119,27 @@ def combine_section_content(sections):
 def sanitize_text_for_pdf(text):
     """
     Cleans text to ensure PDF compatibility.
+    1. Normalizes specific math symbols (minus signs) to hyphens.
+    2. Fixes smart quotes.
+    3. Removes markdown bolding.
     """
     replacements = {
-        u'\u2018': "'", u'\u2019': "'",
-        u'\u201c': '"', u'\u201d': '"',
-        u'\u2013': '-', u'\u2014': '-',
-        u'\u2212': '-', "**": ""
+        # --- QUOTES & DASHES ---
+        u'\u2018': "'",  # Left single quote
+        u'\u2019': "'",  # Right single quote
+        u'\u201c': '"',  # Left double quote
+        u'\u201d': '"',  # Right double quote
+        u'\u2013': '-',  # En dash
+        u'\u2014': '-',  # Em dash
+        u'\u2212': '-',  # Mathematical Minus Sign
+
+        # --- MARKDOWN REMOVAL ---
+        "**": ""
     }
+
     for char, replacement in replacements.items():
         text = text.replace(char, replacement)
+
     return text
 
 
@@ -203,19 +216,13 @@ def extract_sections_visual(uploaded_file):
 
 
 # ==============================================================================
-# 5. FIRST PASS EVALUATION
+# 5. FIRST PASS EVALUATION (Uses prompts.py)
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
-    prompt = f"""
-    You are a reviewer assistant of the conference: "{conference_name}".
-    Paper: "{paper_title}"
-    Abstract: "{abstract_text[:4000]}"
-    Task: Perform a Desk Reject Check.
-    STRICT GUIDELINES: Neutral, Read-only, No Markdown.
-    Criteria for REJECT: Irrelevant, No Novelty, Fatal Flaw.
-    """
+    # Fetch prompt from external file
+    prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
+
     try:
-        # UPDATED: Use gpt-4o or gpt-4-turbo. "gpt-5" does not exist and causes crashes.
         response = client.chat.completions.create(
             model="gpt-5",
             messages=[{"role": "user", "content": prompt}]
@@ -226,40 +233,31 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 
 
 # ==============================================================================
-# 6. SECTION REVIEW
+# 6. SECTION REVIEW (Uses prompts.py)
 # ==============================================================================
 def generate_section_review(client, section_name, section_text, paper_title):
     clean_name = section_name.upper().strip()
     clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
+
     if clean_name in SKIP_REVIEW_SECTIONS or section_name.upper() in SKIP_REVIEW_SECTIONS:
         return None
 
+    # Define Section Focus
     section_focus = ""
     if "METHOD" in clean_name:
-        section_focus = "Focus on: Reproducibility, mathematical soundness."
+        section_focus = "Focus on: Reproducibility, mathematical soundness, and clarity of the algorithm steps."
     elif "RESULT" in clean_name:
-        section_focus = "Focus on: Fairness of baselines, statistical significance."
+        section_focus = "Focus on: Fairness of baselines, statistical significance, and whether claims match the data."
     elif "INTRO" in clean_name:
-        section_focus = "Focus on: Clarity of the research gap."
+        section_focus = "Focus on: Clarity of the research gap and explicit contribution statement."
     elif "RELATED" in clean_name:
-        section_focus = "Focus on: Coverage of recent works."
+        section_focus = "Focus on: Coverage of recent state-of-the-art works (post-2020)."
     elif "CONCLUSION" in clean_name:
-        section_focus = "Focus on: Whether conclusion is supported."
+        section_focus = "Focus on: Whether the conclusion is supported by the experiments presented."
 
-    prompt = f"""
-    You are a strictly neutral reviewer assistant.
-    Paper: "{paper_title}"
-    Section: "{section_name}"
-    Task: Identify critical issues. {section_focus}
-    STRICT RULES:
-    1. Neutrality, No Modification.
-    2. USE STANDARD GREEK/MATH SYMBOLS (α, β, ∑). Do NOT spell them out.
-    3. NO MARKDOWN.
-    4. Max 4 critical points.
+    # Fetch prompt from external file
+    prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
 
-    Section Content:
-    {section_text[:15000]}
-    """
     try:
         response = client.chat.completions.create(
             model="gpt-5",
@@ -271,32 +269,40 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION (ROBUST PATH FIX)
+# 7. PDF GENERATION (CRASH FIX)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
+    # 1. Sanitize basic text
     full_text_processed = sanitize_text_for_pdf(full_report_text)
+
     pdf = FPDF()
     pdf.add_page()
 
-    # --- ROBUST FONT PATH LOGIC ---
-    # This finds the directory where backend.py is located
+    # --- FONT PATH LOGIC ---
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    # Constructs the absolute path to the font
     font_path = os.path.join(base_dir, "dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
 
-    font_family = "Arial"
+    font_family = "Arial"  # Default fallback
 
+    # Try loading Unicode font
     if os.path.exists(font_path):
         try:
             pdf.add_font('DejaVu', '', font_path, uni=True)
             font_family = 'DejaVu'
             print(f"LOG: Loaded font from {font_path}")
         except Exception as e:
-            print(f"Warning: Failed to load font: {e}")
+            print(f"Warning: Failed to load DejaVu font: {e}")
+            font_family = "Arial"
     else:
-        print(f"CRITICAL: Font NOT found at {font_path}")
+        # Check current folder as backup
+        if os.path.exists("DejaVuSans.ttf"):
+            pdf.add_font('DejaVu', '', "DejaVuSans.ttf", uni=True)
+            font_family = 'DejaVu'
+        else:
+            print(f"CRITICAL WARNING: Font not found at {font_path}. Greek letters will fail.")
+            font_family = "Arial"
 
-    # Header
+    # --- HEADER ---
     pdf.set_font(font_family, '', 16)
     pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(2)
@@ -311,26 +317,46 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
     pdf.ln(2)
 
-    # Body
+    # --- BODY ---
     pdf.set_font(font_family, '', 11)
+
     lines = full_text_processed.split('\n')
     for line in lines:
-        if font_family == 'DejaVu':
-            clean = line.strip()
-        else:
-            clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
+        clean = line.strip()
 
-        if "DECISION:" in clean or "--- SECTION:" in clean:
+        # Safe Decoding Logic:
+        # If font is Arial (fallback), we MUST strip special chars or it crashes
+        if font_family == 'Arial':
+            try:
+                # Replace unprintable chars to prevent "PDF cannot be opened" error
+                clean = clean.encode('latin-1', 'replace').decode('latin-1')
+            except:
+                clean = "Error: Text contained unsupported characters."
+
+        # Formatting decisions
+        if "DECISION: REJECT" in clean:
+            pdf.set_text_color(200, 0, 0)
+            pdf.cell(0, 10, txt=clean, ln=True)
+            pdf.set_text_color(0, 0, 0)
+        elif "DECISION: PROCEED" in clean:
+            pdf.set_text_color(0, 150, 0)
+            pdf.cell(0, 10, txt=clean, ln=True)
+            pdf.set_text_color(0, 0, 0)
+        elif "--- SECTION:" in clean or "SECTION TITLE:" in clean:
             pdf.ln(5)
             pdf.cell(0, 10, txt=clean, ln=True)
         else:
             pdf.multi_cell(0, 5, clean)
 
+    # --- OUTPUT GENERATION ---
     try:
-        return pdf.output(dest="S").encode("latin-1")
+        # 'S' returns the string/bytes. We encode to latin-1 for FPDF compatibility
+        # using 'replace' to ensure we never send a corrupt file.
+        return pdf.output(dest="S").encode("latin-1", "replace")
     except Exception as e:
         print(f"PDF Output Error: {e}")
-        return b"Error generating PDF"
+        # Return a safe error PDF byte string if all else fails
+        return b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/Resources <<\n/Font <<\n/F1 4 0 R\n>>\n>>\n/MediaBox [0 0 612 792]\n/Contents 5 0 R\n>>\nendobj\n4 0 obj\n<<\n/Type /Font\n/Subtype /Type1\n/Name /F1\n/BaseFont /Helvetica\n>>\nendobj\n5 0 obj\n<<\n/Length 44\n>>\nstream\nBT\n/F1 24 Tf\n100 700 Td\n(Error Generating Report) Tj\nET\nendstream\nendobj\nxref\n0 6\n0000000000 65535 f\n0000000010 00000 n\n0000000060 00000 n\n0000000157 00000 n\n0000000307 00000 n\n0000000395 00000 n\ntrailer\n<<\n/Size 6\n/Root 1 0 R\n>>\nstartxref\n490\n%%EOF"
 
 
 # ==============================================================================
