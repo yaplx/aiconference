@@ -44,8 +44,8 @@ def get_section_review_prompt(paper_title, section_name, section_focus, section_
     **STRICT RULES:**
     1. **NO MODIFICATION:** Do NOT attempt to rewrite, fix, or modify the data/text. Only review it.
     2. **NEUTRALITY:** Be objective. Do not praise. Only raise verification points.
-    3. **GREEK/MATH SYMBOLS:** You MUST use all Greek letters and symbols. 
-       - CORRECT: α, β, ∑, σ
+    3. **NO GREEK/MATH SYMBOLS:** You MUST SPELL OUT all Greek letters and symbols. 
+       - CORRECT: "alpha", "beta", "sum", "sigma"
        list the greek letter in the doc
     4. **NO MARKDOWN:** Do NOT use markdown bolding (like **text**) or headers.
     5. **LIMIT:** Maximum 4 critical points.

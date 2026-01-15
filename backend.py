@@ -3,7 +3,6 @@ import re
 import csv
 import io
 import os
-import glob
 from openai import OpenAI
 from fpdf import FPDF
 import prompts  # Imports your local prompts.py file
@@ -92,9 +91,17 @@ def combine_section_content(sections):
 
 
 def sanitize_text_for_pdf(text):
+    """
+    Cleans text for standard Arial font (Latin-1).
+    Replaces common smart quotes and typographic marks.
+    """
     replacements = {
-        u'\u2018': "'", u'\u2019': "'", u'\u201c': '"', u'\u201d': '"',
-        u'\u2013': '-', u'\u2014': '-', u'\u2212': '-', "**": ""
+        u'\u2018': "'", u'\u2019': "'",  # Smart single quotes
+        u'\u201c': '"', u'\u201d': '"',  # Smart double quotes
+        u'\u2013': '-', u'\u2014': '-',  # Dashes
+        u'\u2212': '-',  # Minus sign
+        "**": "",  # Markdown bold
+        "##": ""  # Markdown headers
     }
     for char, replacement in replacements.items():
         text = text.replace(char, replacement)
@@ -167,12 +174,10 @@ def extract_sections_visual(uploaded_file):
 
 
 # ==============================================================================
-# 4. REVIEW LOGIC (GPT-5 & PROMPTS.PY)
+# 4. REVIEW LOGIC (USES PROMPTS.PY)
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
-    # Fetch prompt from prompts.py
     prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
-
     try:
         response = client.chat.completions.create(
             model="gpt-5",
@@ -186,25 +191,22 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 def generate_section_review(client, section_name, section_text, paper_title):
     clean_name = section_name.upper().strip()
     clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
-
     if clean_name in SKIP_REVIEW_SECTIONS or section_name.upper() in SKIP_REVIEW_SECTIONS:
         return None
 
     section_focus = ""
     if "METHOD" in clean_name:
-        section_focus = "Focus on: Reproducibility, mathematical soundness, and clarity of the algorithm steps."
+        section_focus = "Focus on: Reproducibility, mathematical soundness."
     elif "RESULT" in clean_name:
-        section_focus = "Focus on: Fairness of baselines, statistical significance, and whether claims match the data."
+        section_focus = "Focus on: Fairness, statistical significance."
     elif "INTRO" in clean_name:
-        section_focus = "Focus on: Clarity of the research gap and explicit contribution statement."
+        section_focus = "Focus on: Clarity of research gap."
     elif "RELATED" in clean_name:
-        section_focus = "Focus on: Coverage of recent state-of-the-art works (post-2020)."
+        section_focus = "Focus on: Coverage of recent works."
     elif "CONCLUSION" in clean_name:
-        section_focus = "Focus on: Whether the conclusion is supported by the experiments presented."
+        section_focus = "Focus on: Whether conclusion is supported."
 
-    # Fetch prompt from prompts.py
     prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
-
     try:
         response = client.chat.completions.create(
             model="gpt-5",
@@ -216,92 +218,49 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 5. PDF GENERATION (CRASH PROOF & STATUS REPORT)
+# 5. PDF GENERATION (STANDARD ARIAL - NO CUSTOM FONTS)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    # 0. CLEANUP BAD CACHE FILES
-    try:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        for pkl_file in glob.glob(os.path.join(base_dir, "*.pkl")):
-            try:
-                os.remove(pkl_file)
-            except:
-                pass
-    except:
-        pass
-
     # 1. Sanitize text
     full_text_processed = sanitize_text_for_pdf(full_report_text)
 
     pdf = FPDF()
-
-    # --- FONT LOADING LOGIC ---
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    font_path_1 = os.path.join(base_dir, "dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
-    font_path_2 = os.path.join(base_dir, "DejaVuSans.ttf")
-
-    font_family = "Arial"  # Default
-    unicode_font_loaded = False
-
-    # Attempt to load the Unicode font
-    try:
-        if os.path.exists(font_path_1):
-            pdf.add_font('DejaVu', '', font_path_1, uni=True)
-            font_family = 'DejaVu'
-            unicode_font_loaded = True
-        elif os.path.exists(font_path_2):
-            pdf.add_font('DejaVu', '', font_path_2, uni=True)
-            font_family = 'DejaVu'
-            unicode_font_loaded = True
-    except:
-        pass
-
-        # Add Page (Must happen AFTER font registration)
     pdf.add_page()
 
+    # Use Standard Arial (Built-in to FPDF, no file needed)
+    pdf.set_font("Arial", '', 11)
+
     # --- HEADER ---
-    pdf.set_font(font_family, '', 16)
+    pdf.set_font("Arial", '', 16)
     pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(2)
 
-    # --- FONT STATUS REPORT (NEW) ---
-    pdf.set_font(font_family, '', 10)
-    if unicode_font_loaded:
-        pdf.set_text_color(0, 100, 0)  # Dark Green
-        pdf.cell(0, 10, txt="[System Check: DejaVu Font Loaded Successfully. Greek Symbols Supported.]", ln=True,
-                 align='C')
-    else:
-        pdf.set_text_color(200, 0, 0)  # Red
-        pdf.cell(0, 10, txt="[System Check: DejaVu Font Failed to Load. Greek Symbols Replaced.]", ln=True, align='C')
-    pdf.ln(2)
-
     # Disclaimer
-    pdf.set_text_color(100, 100, 100)  # Gray
-    pdf.set_font(font_family, '', 8)
+    pdf.set_text_color(100, 100, 100)
+    pdf.set_font("Arial", '', 8)
     header_disclaimer = (
         "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
-        "suggestion based on structural and content analysis. "
-        "The Human Reviewer must verify all 'FOCUS POINTS' manually."
+        "suggestion based on structural and content analysis."
     )
     pdf.multi_cell(0, 4, header_disclaimer, align='C')
     pdf.ln(8)
 
     # Report Title
-    pdf.set_text_color(0, 0, 0)  # Black
-    pdf.set_font(font_family, '', 14)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", '', 14)
     pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
     pdf.ln(2)
 
     # --- BODY CONTENT ---
-    pdf.set_font(font_family, '', 11)
+    pdf.set_font("Arial", '', 11)
 
     lines = full_text_processed.split('\n')
     for line in lines:
         clean = line.strip()
 
-        # CRITICAL FIX: Ensure no crash if font is missing
-        if not unicode_font_loaded:
-            clean = clean.encode('latin-1', 'replace').decode('latin-1')
+        # CRITICAL: Force Latin-1 encoding.
+        # Any remaining Greek symbols will become '?' safely to prevent crashes.
+        clean = clean.encode('latin-1', 'replace').decode('latin-1')
 
         if "DECISION: REJECT" in clean:
             pdf.set_text_color(200, 0, 0)
@@ -311,18 +270,18 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
             pdf.set_text_color(0, 150, 0)
             pdf.cell(0, 10, txt=clean, ln=True)
             pdf.set_text_color(0, 0, 0)
-        elif "--- SECTION:" in clean or "SECTION TITLE:" in clean or "IMPORTANT DISCLAIMER" in clean or "SCOPE OF REVIEW" in clean:
+        elif "--- SECTION:" in clean or "SECTION TITLE:" in clean:
             pdf.ln(5)
             pdf.cell(0, 10, txt=clean, ln=True)
         else:
             pdf.multi_cell(0, 5, clean)
 
-    # Return valid PDF bytes safely
+    # Return valid PDF bytes
     return pdf.output(dest="S").encode("latin-1", "replace")
 
 
 # ==============================================================================
-# 8. CSV BATCH GENERATOR
+# 6. CSV BATCH GENERATOR
 # ==============================================================================
 def create_batch_csv(paper_results_list):
     output = io.StringIO()
