@@ -279,7 +279,6 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     # Return valid PDF bytes
     return pdf.output(dest="S").encode("latin-1", "replace")
 
-
 # ==============================================================================
 # 6. CSV BATCH GENERATOR
 # ==============================================================================
