@@ -323,7 +323,7 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION (UNICODE ENABLED)
+# 7. PDF GENERATION (PATH UPDATED TO SUBFOLDER)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
     # 1. Sanitize text (fix dashes/quotes/bolding)
@@ -333,20 +333,25 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     pdf.add_page()
 
     # --- FONT SETUP ---
-    font_path = "DejaVuSans.ttf"
+    # UPDATED PATH: Pointing to dejavu-sans-ttf-2.37/ttf/DejaVuSans.ttf
+    # os.path.join handles the backslashes for you automatically.
+    font_path = os.path.join("dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
+
     font_family = "Arial"  # Default fallback
 
     # Check for Unicode font
     if os.path.exists(font_path):
         try:
+            # uni=True enables Unicode support in FPDF
             pdf.add_font('DejaVu', '', font_path, uni=True)
             font_family = 'DejaVu'
-            print("LOG: Successfully loaded DejaVuSans.ttf")
+            print(f"LOG: Successfully loaded font from {font_path}")
         except Exception as e:
             print(f"Warning: Failed to load DejaVu font: {e}")
             font_family = "Arial"
     else:
-        print("Warning: DejaVuSans.ttf not found in project folder. Falling back to Arial (Greek symbols will fail).")
+        print(f"CRITICAL WARNING: Font not found at {font_path}")
+        print("Greek letters will appear as '?'")
         font_family = "Arial"
 
     # --- HEADER GENERATION ---
