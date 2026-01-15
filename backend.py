@@ -341,11 +341,12 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
         try:
             pdf.add_font('DejaVu', '', font_path, uni=True)
             font_family = 'DejaVu'
+            print("LOG: Successfully loaded DejaVuSans.ttf")
         except Exception as e:
             print(f"Warning: Failed to load DejaVu font: {e}")
             font_family = "Arial"
     else:
-        print("Warning: DejaVuSans.ttf not found. Greek symbols will appear as '?'.")
+        print("Warning: DejaVuSans.ttf not found in project folder. Falling back to Arial (Greek symbols will fail).")
         font_family = "Arial"
 
     # --- HEADER GENERATION ---
