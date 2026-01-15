@@ -135,8 +135,7 @@ if st.session_state.processing and uploaded_files:
             else:
                 file_container = st.empty()
 
-            # --- DATA STORAGE FOR RECONSTRUCTION ---
-            # We will save the content of each tab here so we can rebuild it later
+            # --- CRITICAL: Initialize storage for UI reconstruction ---
             saved_tabs_data = []
             first_pass_content = ""
 
@@ -204,7 +203,7 @@ if st.session_state.processing and uploaded_files:
                                 st.markdown(feedback)
                                 report_log += f"\n--- SECTION: {sec['title']} ---\n{feedback}\n"
 
-                                # SAVE DATA FOR LATER
+                                # --- SAVE THE DATA FOR RECONSTRUCTION ---
                                 saved_tabs_data.append({
                                     "title": sec['title'],
                                     "content": feedback
@@ -224,15 +223,15 @@ if st.session_state.processing and uploaded_files:
             # --- GENERATE PDF ---
             pdf_bytes = backend.create_pdf_report(report_text, filename=uploaded_file.name)
 
+            # --- SAVE RESULTS TO SESSION STATE ---
             temp_results.append({
                 'filename': uploaded_file.name,
                 'decision': decision,
                 'notes': notes,
                 'report_text': report_text,
                 'pdf_bytes': pdf_bytes,
-                # Store the UI data
-                'first_pass_content': first_pass_content,
-                'saved_tabs_data': saved_tabs_data
+                'first_pass_content': first_pass_content,  # <--- Saved here
+                'saved_tabs_data': saved_tabs_data  # <--- Saved here
             })
 
         except Exception as e:
@@ -292,19 +291,19 @@ if st.session_state.results:
 
             st.divider()
 
-            # 3. RECONSTRUCT TABS (The critical part!)
+            # 3. RECONSTRUCT TABS
             # We use the saved data to rebuild the tabs exactly as they were
             saved_sections = res.get('saved_tabs_data', [])
+            first_pass = res.get('first_pass_content', "")
 
-            # If we have saved data, rebuild the nice UI
-            if saved_sections or res.get('first_pass_content'):
+            if saved_sections or first_pass:
                 # Titles
                 tab_titles = ["🔍 First Pass"] + [s['title'] for s in saved_sections]
                 result_tabs = st.tabs(tab_titles)
 
                 # Fill First Pass
                 with result_tabs[0]:
-                    st.markdown(res.get('first_pass_content', "No data."))
+                    st.markdown(first_pass if first_pass else "No data available.")
 
                 # Fill Section Tabs
                 for i, sec_data in enumerate(saved_sections):
