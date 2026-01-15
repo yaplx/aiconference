@@ -5,7 +5,7 @@ import io
 import os
 from openai import OpenAI
 from fpdf import FPDF
-import prompts  # Imports your local prompts.py file
+import prompts  #
 
 # ==============================================================================
 # 1. CONFIGURATION
@@ -91,17 +91,9 @@ def combine_section_content(sections):
 
 
 def sanitize_text_for_pdf(text):
-    """
-    Cleans text for standard Arial font (Latin-1).
-    Replaces common smart quotes and typographic marks.
-    """
     replacements = {
-        u'\u2018': "'", u'\u2019': "'",  # Smart single quotes
-        u'\u201c': '"', u'\u201d': '"',  # Smart double quotes
-        u'\u2013': '-', u'\u2014': '-',  # Dashes
-        u'\u2212': '-',  # Minus sign
-        "**": "",  # Markdown bold
-        "##": ""  # Markdown headers
+        u'\u2018': "'", u'\u2019': "'", u'\u201c': '"', u'\u201d': '"',
+        u'\u2013': '-', u'\u2014': '-', u'\u2212': '-', "**": ""
     }
     for char, replacement in replacements.items():
         text = text.replace(char, replacement)
@@ -112,80 +104,92 @@ def sanitize_text_for_pdf(text):
 # 3. EXTRACTION
 # ==============================================================================
 def extract_sections_visual(uploaded_file):
-    uploaded_file.seek(0)
-    file_bytes = uploaded_file.read()
-    doc = fitz.open(stream=file_bytes, filetype="pdf")
-    all_lines = []
-    for page in doc:
-        text = page.get_text("text")
-        lines = text.split('\n')
-        for line in lines:
-            clean = line.strip()
-            if clean: all_lines.append(clean)
-    doc.close()
+    try:
+        uploaded_file.seek(0)
+        file_bytes = uploaded_file.read()
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        all_lines = []
+        for page in doc:
+            text = page.get_text("text")
+            lines = text.split('\n')
+            for line in lines:
+                clean = line.strip()
+                if clean: all_lines.append(clean)
+        doc.close()
 
-    sections = []
-    current_section = {"title": "Preamble/Introduction", "content": ""}
-    expected_number = 1
-    i = 0
-    while i < len(all_lines):
-        line = all_lines[i]
-        detected_header = False
-        num_str, phrase, is_numbered = "", "", False
+        sections = []
+        current_section = {"title": "Preamble/Introduction", "content": ""}
+        expected_number = 1
+        i = 0
+        while i < len(all_lines):
+            line = all_lines[i]
+            detected_header = False
+            num_str, phrase, is_numbered = "", "", False
 
-        p_num, p_phrase = _parse_header_components(line)
-        if p_num and _is_valid_numbered_header(p_num, p_phrase, expected_number):
-            detected_header = True;
-            is_numbered = True
-            num_str = p_num;
-            phrase = p_phrase
-        elif not detected_header and i + 1 < len(all_lines):
-            num_match = re.match(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)$", line)
-            if num_match:
-                potential_num = num_match.group(1)
-                next_line = all_lines[i + 1].strip()
-                if len(next_line) < 30 and next_line and next_line[0].isupper():
-                    if _is_valid_numbered_header(potential_num, next_line, expected_number):
-                        detected_header = True;
-                        is_numbered = True
-                        num_str = potential_num;
-                        phrase = next_line
-                        i += 1
-
-        if not detected_header:
-            mapped_title = _get_mapped_title(line)
-            if mapped_title:
+            p_num, p_phrase = _parse_header_components(line)
+            if p_num and _is_valid_numbered_header(p_num, p_phrase, expected_number):
                 detected_header = True;
-                is_numbered = False;
-                phrase = mapped_title
+                is_numbered = True
+                num_str = p_num;
+                phrase = p_phrase
+            elif not detected_header and i + 1 < len(all_lines):
+                num_match = re.match(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)$", line)
+                if num_match:
+                    potential_num = num_match.group(1)
+                    next_line = all_lines[i + 1].strip()
+                    if len(next_line) < 30 and next_line and next_line[0].isupper():
+                        if _is_valid_numbered_header(potential_num, next_line, expected_number):
+                            detected_header = True;
+                            is_numbered = True
+                            num_str = potential_num;
+                            phrase = next_line
+                            i += 1
 
-        if detected_header:
-            if current_section["content"].strip(): sections.append(current_section)
-            if is_numbered:
-                current_section = {"title": f"{num_str}. {phrase}", "content": ""}
-                expected_number += 1
+            if not detected_header:
+                mapped_title = _get_mapped_title(line)
+                if mapped_title:
+                    detected_header = True;
+                    is_numbered = False;
+                    phrase = mapped_title
+
+            if detected_header:
+                if current_section["content"].strip(): sections.append(current_section)
+                if is_numbered:
+                    current_section = {"title": f"{num_str}. {phrase}", "content": ""}
+                    expected_number += 1
+                else:
+                    current_section = {"title": phrase, "content": ""}
             else:
-                current_section = {"title": phrase, "content": ""}
-        else:
-            current_section["content"] += line + " "
-        i += 1
-    if current_section["content"].strip(): sections.append(current_section)
-    return sections
+                current_section["content"] += line + " "
+            i += 1
+        if current_section["content"].strip(): sections.append(current_section)
+        return sections
+    except Exception as e:
+        return [{"title": "Error Reading PDF", "content": f"Could not extract text: {e}"}]
 
 
 # ==============================================================================
-# 4. REVIEW LOGIC (USES PROMPTS.PY)
+# 4. REVIEW LOGIC
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
-    prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
     try:
+        prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
         response = client.chat.completions.create(
             model="gpt-5",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Error with gpt-5: {str(e)}"
+        # Fallback to gpt-4o if gpt-5 fails
+        try:
+            prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+        except Exception as e2:
+            return f"AI Error: {str(e2)}"
 
 
 def generate_section_review(client, section_name, section_text, paper_title):
@@ -206,78 +210,121 @@ def generate_section_review(client, section_name, section_text, paper_title):
     elif "CONCLUSION" in clean_name:
         section_focus = "Focus on: Whether conclusion is supported."
 
-    prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
     try:
+        prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
         response = client.chat.completions.create(
             model="gpt-5",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Error with gpt-5: {str(e)}"
+        # Fallback to gpt-4o
+        try:
+            prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+        except Exception as e2:
+            return f"AI Error: {str(e2)}"
 
 
 # ==============================================================================
-# 5. PDF GENERATION (STANDARD ARIAL - NO CUSTOM FONTS)
+# 5. PDF GENERATION (CRASH-PROOF WRAPPER)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    # 1. Sanitize text
-    full_text_processed = sanitize_text_for_pdf(full_report_text)
+    """
+    Safely generates a PDF.
+    If the font loading or PDF generation fails, it catches the error
+    and returns a fallback text file so the app does not crash.
+    """
+    try:
+        pdf = FPDF()
+        pdf.add_page()
 
-    pdf = FPDF()
-    pdf.add_page()
+        # Path setup: dejavu-sans-ttf-2.37/ttf/DejaVuSans.ttf
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        font_path = os.path.join(base_dir, "dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
 
-    # Use Standard Arial (Built-in to FPDF, no file needed)
-    pdf.set_font("Arial", '', 11)
+        # Default fallback font
+        font_family = "Arial"
+        unicode_font_loaded = False
 
-    # --- HEADER ---
-    pdf.set_font("Arial", '', 16)
-    pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
-    pdf.ln(2)
+        # Attempt to load font
+        if os.path.exists(font_path):
+            try:
+                pdf.add_font('DejaVu', '', font_path, uni=True)
+                font_family = 'DejaVu'
+                unicode_font_loaded = True
+            except Exception:
+                pass  # Silently fail back to Arial
 
-    # Disclaimer
-    pdf.set_text_color(100, 100, 100)
-    pdf.set_font("Arial", '', 8)
-    header_disclaimer = (
-        "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
-        "suggestion based on structural and content analysis."
-    )
-    pdf.multi_cell(0, 4, header_disclaimer, align='C')
-    pdf.ln(8)
+        # --- TITLE ---
+        pdf.set_font(font_family, '', 16)
+        pdf.cell(0, 10, txt="AI Paper Improvement Report", ln=True, align='C')
+        pdf.ln(3)
 
-    # Report Title
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Arial", '', 14)
-    pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
-    pdf.ln(2)
+        # --- DISCLAIMER SECTION (UPDATED) ---
+        pdf.set_font(font_family, '', 8)
+        pdf.set_text_color(100, 100, 100)  # Grey
 
-    # --- BODY CONTENT ---
-    pdf.set_font("Arial", '', 11)
+        disclaimer_text = (
+            "DISCLAIMER: This automated report relies on header recognition. "
+            "1) If a section header is unique or not recognized, that section's content "
+            "is automatically merged into the previous section for review. "
+            "2) SCOPE: To ensure focused feedback, this tool EXCLUDES the Title page info "
+            "(Preamble), References, Bibliography, Acknowledgements, and Appendices."
+        )
 
-    lines = full_text_processed.split('\n')
-    for line in lines:
-        clean = line.strip()
+        pdf.multi_cell(0, 4, txt=disclaimer_text, align='C')
+        pdf.ln(10)
 
-        # CRITICAL: Force Latin-1 encoding.
-        # Any remaining Greek symbols will become '?' safely to prevent crashes.
-        clean = clean.encode('latin-1', 'replace').decode('latin-1')
+        # --- REPORT FOR LINE ---
+        pdf.set_text_color(0, 0, 0)  # Reset to Black
+        pdf.set_font(font_family, '', 14)
+        pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
+        pdf.ln(2)
 
-        if "DECISION: REJECT" in clean:
-            pdf.set_text_color(200, 0, 0)
-            pdf.cell(0, 10, txt=clean, ln=True)
-            pdf.set_text_color(0, 0, 0)
-        elif "DECISION: PROCEED" in clean:
-            pdf.set_text_color(0, 150, 0)
-            pdf.cell(0, 10, txt=clean, ln=True)
-            pdf.set_text_color(0, 0, 0)
-        elif "--- SECTION:" in clean or "SECTION TITLE:" in clean:
-            pdf.ln(5)
-            pdf.cell(0, 10, txt=clean, ln=True)
-        else:
-            pdf.multi_cell(0, 5, clean)
+        # --- BODY CONTENT ---
+        pdf.set_font(font_family, '', 12)
 
-    # Return valid PDF bytes
-    return pdf.output(dest="S").encode("latin-1", "replace")
+        # Sanitize text
+        clean_text = sanitize_text_for_pdf(full_report_text)
+
+        lines = clean_text.split('\n')
+        for line in lines:
+            safe_line = line.strip()
+
+            # CRITICAL: If no unicode font, strip chars to prevent crash
+            if not unicode_font_loaded:
+                safe_line = safe_line.encode('latin-1', 'replace').decode('latin-1')
+
+            # Formatting
+            if "DECISION: REJECT" in safe_line:
+                pdf.set_text_color(200, 0, 0)
+                pdf.cell(0, 10, txt=safe_line, ln=True)
+                pdf.set_text_color(0, 0, 0)
+            elif "DECISION: PROCEED" in safe_line:
+                pdf.set_text_color(0, 150, 0)
+                pdf.cell(0, 10, txt=safe_line, ln=True)
+                pdf.set_text_color(0, 0, 0)
+            elif "--- SECTION:" in safe_line or "SECTION TITLE:" in safe_line:
+                pdf.ln(5)
+                pdf.cell(0, 10, txt=safe_line, ln=True)
+            else:
+                pdf.multi_cell(0, 5, safe_line)
+
+        # Return PDF bytes
+        return pdf.output(dest="S").encode("latin-1", "replace")
+
+    except Exception as e:
+        # EMERGENCY FALLBACK
+        # If the above crashes (e.g. font issues), return a basic text file.
+        # This PREVENTS the "Result Disappearing" bug in UI.py
+        print(f"PDF Gen failed: {e}. Returning text fallback.")
+        return full_report_text.encode('utf-8', 'replace')
+
 
 # ==============================================================================
 # 6. CSV BATCH GENERATOR
