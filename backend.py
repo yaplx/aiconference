@@ -91,9 +91,17 @@ def combine_section_content(sections):
 
 
 def sanitize_text_for_pdf(text):
+    """
+    Cleans text for standard Arial font (Latin-1).
+    Replaces common smart quotes and typographic marks.
+    """
     replacements = {
-        u'\u2018': "'", u'\u2019': "'", u'\u201c': '"', u'\u201d': '"',
-        u'\u2013': '-', u'\u2014': '-', u'\u2212': '-', "**": ""
+        u'\u2018': "'", u'\u2019': "'",  # Smart single quotes
+        u'\u201c': '"', u'\u201d': '"',  # Smart double quotes
+        u'\u2013': '-', u'\u2014': '-',  # Dashes
+        u'\u2212': '-',  # Minus sign
+        "**": "",  # Markdown bold
+        "##": ""  # Markdown headers
     }
     for char, replacement in replacements.items():
         text = text.replace(char, replacement)
@@ -166,7 +174,7 @@ def extract_sections_visual(uploaded_file):
 
 
 # ==============================================================================
-# 4. REVIEW LOGIC (GPT-5 & PROMPTS.PY)
+# 4. REVIEW LOGIC (USES PROMPTS.PY)
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
     prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
@@ -210,97 +218,66 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 5. PDF GENERATION (UPDATED DISCLAIMER & FONT LOGIC)
+# 5. PDF GENERATION (STANDARD ARIAL - NO CUSTOM FONTS)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
+    # 1. Sanitize text
+    full_text_processed = sanitize_text_for_pdf(full_report_text)
+
     pdf = FPDF()
     pdf.add_page()
 
-    # Path setup: dejavu-sans-ttf-2.37/ttf/DejaVuSans.ttf
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    font_path = os.path.join(base_dir, "dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
+    # Use Standard Arial (Built-in to FPDF, no file needed)
+    pdf.set_font("Arial", '', 11)
 
-    # Default fallback font
-    font_family = "Arial"
-    unicode_font_loaded = False
-
-    # Attempt to load font
-    if os.path.exists(font_path):
-        try:
-            pdf.add_font('DejaVu', '', font_path, uni=True)
-            font_family = 'DejaVu'
-            unicode_font_loaded = True
-        except Exception as e:
-            print(f"Font Load Error: {e}")
-
-    # --- TITLE ---
-    pdf.set_font(font_family, '', 16)
-    pdf.cell(0, 10, txt="AI Paper Improvement Report", ln=True, align='C')
-    pdf.ln(3)
-
-    # --- FONT STATUS CHECK ---
-    pdf.set_font(font_family, '', 10)
-    if unicode_font_loaded:
-        pdf.set_text_color(0, 100, 0)  # Green
-        pdf.cell(0, 10, txt="[System: DejaVu Font Loaded. Greek Symbols Supported.]", ln=True, align='C')
-    else:
-        pdf.set_text_color(200, 0, 0)  # Red
-        pdf.cell(0, 10, txt="[System: DejaVu Font Missing. Greek Symbols Replaced.]", ln=True, align='C')
+    # --- HEADER ---
+    pdf.set_font("Arial", '', 16)
+    pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(2)
 
-    # --- UPDATED DISCLAIMER SECTION ---
-    pdf.set_font(font_family, '', 8)
-    pdf.set_text_color(100, 100, 100)  # Grey
-
-    disclaimer_text = (
-        "DISCLAIMER: This automated report relies on header recognition. "
-        "1) If a section header is unique or not recognized, that section's content "
-        "is automatically merged into the previous section for review. "
-        "2) SCOPE: To ensure focused feedback, this tool EXCLUDES the Title page info "
-        "(Preamble), References, Bibliography, Acknowledgements, and Appendices."
+    # Disclaimer
+    pdf.set_text_color(100, 100, 100)
+    pdf.set_font("Arial", '', 8)
+    header_disclaimer = (
+        "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
+        "suggestion based on structural and content analysis."
     )
+    pdf.multi_cell(0, 4, header_disclaimer, align='C')
+    pdf.ln(8)
 
-    pdf.multi_cell(0, 4, txt=disclaimer_text, align='C')
-    pdf.ln(10)
-
-    # --- REPORT FOR LINE ---
-    pdf.set_text_color(0, 0, 0)  # Black
-    pdf.set_font(font_family, '', 14)
+    # Report Title
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", '', 14)
     pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
     pdf.ln(2)
 
     # --- BODY CONTENT ---
-    pdf.set_font(font_family, '', 12)
+    pdf.set_font("Arial", '', 11)
 
-    # Sanitize just in case
-    clean_text = sanitize_text_for_pdf(full_report_text)
-
-    lines = clean_text.split('\n')
+    lines = full_text_processed.split('\n')
     for line in lines:
-        safe_line = line.strip()
+        clean = line.strip()
 
-        # Strip Unicode if using Arial to prevent crash
-        if not unicode_font_loaded:
-            safe_line = safe_line.encode('latin-1', 'replace').decode('latin-1')
+        # CRITICAL: Force Latin-1 encoding.
+        # Any remaining Greek symbols will become '?' safely to prevent crashes.
+        clean = clean.encode('latin-1', 'replace').decode('latin-1')
 
-        # Coloring Logic
-        if "DECISION: REJECT" in safe_line:
+        if "DECISION: REJECT" in clean:
             pdf.set_text_color(200, 0, 0)
-            pdf.cell(0, 10, txt=safe_line, ln=True)
+            pdf.cell(0, 10, txt=clean, ln=True)
             pdf.set_text_color(0, 0, 0)
-        elif "DECISION: PROCEED" in safe_line:
+        elif "DECISION: PROCEED" in clean:
             pdf.set_text_color(0, 150, 0)
-            pdf.cell(0, 10, txt=safe_line, ln=True)
+            pdf.cell(0, 10, txt=clean, ln=True)
             pdf.set_text_color(0, 0, 0)
-        elif "--- SECTION:" in safe_line or "SECTION TITLE:" in safe_line:
+        elif "--- SECTION:" in clean or "SECTION TITLE:" in clean:
             pdf.ln(5)
-            pdf.cell(0, 10, txt=safe_line, ln=True)
+            pdf.cell(0, 10, txt=clean, ln=True)
         else:
-            pdf.multi_cell(0, 5, safe_line)
+            pdf.multi_cell(0, 5, clean)
 
     # Return valid PDF bytes
     return pdf.output(dest="S").encode("latin-1", "replace")
-
 
 # ==============================================================================
 # 6. CSV BATCH GENERATOR
