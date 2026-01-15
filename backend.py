@@ -5,10 +5,10 @@ import io
 import os
 from openai import OpenAI
 from fpdf import FPDF
-import prompts  # Imports your local prompts.py
+import prompts  #
 
 # ==============================================================================
-# 1. CONFIGURATION
+# 1. CONFIGURATION & CONSTANTS
 # ==============================================================================
 HEADER_MAP = {
     "ABSTRACT": "ABSTRACT", "INTRODUCTION": "INTRODUCTION",
@@ -91,11 +91,6 @@ def combine_section_content(sections):
 
 
 def sanitize_text_for_pdf(text):
-    """
-    Basic cleanup.
-    Note: If the Unicode font fails to load, we will do a more aggressive
-    cleanup inside create_pdf_report to prevent crashes.
-    """
     replacements = {
         u'\u2018': "'", u'\u2019': "'", u'\u201c': '"', u'\u201d': '"',
         u'\u2013': '-', u'\u2014': '-', u'\u2212': '-', "**": ""
@@ -174,7 +169,7 @@ def extract_sections_visual(uploaded_file):
 # 4. REVIEW LOGIC (USING PROMPTS.PY)
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
-    # Retrieve prompt from prompts.py
+    # Fetch prompt from the external prompts.py file
     prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
     try:
         response = client.chat.completions.create(
@@ -204,7 +199,7 @@ def generate_section_review(client, section_name, section_text, paper_title):
     elif "CONCLUSION" in clean_name:
         section_focus = "Focus on: Whether conclusion is supported."
 
-    # Retrieve prompt from prompts.py
+    # Fetch prompt from the external prompts.py file
     prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
     try:
         response = client.chat.completions.create(
@@ -217,26 +212,21 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 5. PDF GENERATION (CRASH PROOF)
+# 5. PDF GENERATION (FIXED: NO FAKE ERROR)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    # 1. Clean basic things (like markdown bolding)
     full_text_processed = sanitize_text_for_pdf(full_report_text)
-
     pdf = FPDF()
 
-    # --- FONT LOADING LOGIC ---
+    # --- FONT LOADING ---
     base_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # Path 1: Inside the subfolder structure (as you described)
     font_path_1 = os.path.join(base_dir, "dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
-    # Path 2: Directly in the main folder (as a backup)
     font_path_2 = os.path.join(base_dir, "DejaVuSans.ttf")
 
-    font_family = "Arial"  # Fallback default
+    font_family = "Arial"
     unicode_font_loaded = False
 
-    # Attempt to load the Unicode font
+    # Try loading Unicode font, fallback silently to Arial if fail
     try:
         if os.path.exists(font_path_1):
             pdf.add_font('DejaVu', '', font_path_1, uni=True)
@@ -246,12 +236,10 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
             pdf.add_font('DejaVu', '', font_path_2, uni=True)
             font_family = 'DejaVu'
             unicode_font_loaded = True
-        else:
-            print("Warning: DejaVuSans.ttf not found. Falling back to Arial (Greek letters will be removed).")
-    except Exception as e:
-        print(f"Font loading error: {e}. Falling back to Arial.")
+    except:
+        pass
 
-    # Add Page must happen AFTER font is registered
+        # Add Page must happen AFTER font definition
     pdf.add_page()
 
     # Header
@@ -260,28 +248,21 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     pdf.ln(2)
     pdf.set_font(font_family, '', 11)
 
-    # --- BODY TEXT WRITING ---
     lines = full_text_processed.split('\n')
     for line in lines:
         clean = line.strip()
 
-        # CRITICAL FIX: If we are using Arial (because DejaVu failed), we MUST
-        # remove any Greek/Unicode chars, or FPDF will crash/error out.
+        # CRITICAL FIX: If we are using Arial, strip non-latin characters
         if not unicode_font_loaded:
-            try:
-                # This replaces characters like 'α' with '?' or similar safe ASCII
-                clean = clean.encode('latin-1', 'replace').decode('latin-1')
-            except:
-                clean = "[Text removed due to encoding error]"
+            clean = clean.encode('latin-1', 'replace').decode('latin-1')
 
-        # Write to PDF
         if "DECISION:" in clean or "--- SECTION:" in clean:
             pdf.ln(5)
             pdf.cell(0, 10, txt=clean, ln=True)
         else:
             pdf.multi_cell(0, 5, clean)
 
-    # Output the bytes safely
+    # FORCE SUCCESS: Return bytes with 'replace' to prevent UnicodeEncodeError crash
     return pdf.output(dest="S").encode("latin-1", "replace")
 
 
