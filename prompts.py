@@ -47,6 +47,7 @@ def get_section_review_prompt(paper_title, section_name, section_focus, section_
     3. **NO GREEK/MATH SYMBOLS:** You MUST SPELL OUT all Greek letters and symbols. 
        - INCORRECT: α, β, ∑, σ
        - CORRECT: "alpha", "beta", "sum", "sigma"
+       list the greek letter in the doc
     4. **NO MARKDOWN:** Do NOT use markdown bolding (like **text**) or headers.
     5. **LIMIT:** Maximum 4 critical points.
     6. **CONCISENESS:** Keep points short, precise, and direct.
