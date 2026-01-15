@@ -318,7 +318,7 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION
+# 7. PDF GENERATION (ROBUST FONT FINDER)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
     # 1. Sanitize text (fix dashes/quotes/bolding)
