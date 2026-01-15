@@ -117,11 +117,10 @@ def combine_section_content(sections):
 
 def sanitize_text_for_pdf(text):
     """
-    Replaces 'Smart Quotes' with standard ASCII quotes to prevent ? errors,
-    BUT keeps Greek letters and other Unicode characters intact.
+    Replaces 'Smart Quotes' with standard ASCII quotes to prevent errors,
+    BUT preserves Greek letters and other Unicode characters.
     """
     replacements = {
-        # Fix Smart Quotes (The main cause of ? for quotes)
         u'\u2018': "'",
         u'\u2019': "'",
         u'\u201c': '"',
@@ -129,8 +128,7 @@ def sanitize_text_for_pdf(text):
         u'\u2013': '-',  # En dash
         u'\u2014': '-',  # Em dash
         u'\u2026': '...',  # Ellipsis
-        # Remove markdown bolding if any remains
-        "**": ""
+        "**": ""  # Remove markdown bolding
     }
 
     for char, replacement in replacements.items():
@@ -225,7 +223,7 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
     **STRICT GUIDELINES:**
     1. **NEUTRALITY:** Maintain a strictly neutral and objective tone.
     2. **READ-ONLY:** Do NOT modify, rewrite, or correct the abstract content.
-    3. **NO MARKDOWN:** Do not use bolding (**text**) or italics (*text*) in your output decision.
+    3. **NO MARKDOWN:** Do not use bolding (**text**) or italics (*text*).
 
     **CRITICAL INSTRUCTION:**
     - Ignore OCR Artifacts.
@@ -287,7 +285,7 @@ def generate_section_review(client, section_name, section_text, paper_title):
     **STRICT RULES:**
     1. **NO MODIFICATION:** Do NOT attempt to rewrite, fix, or modify the data/text. Only review it.
     2. **NEUTRALITY:** Be objective. Do not praise. Only raise verification points.
-    3. **SYMBOLS:** You ARE ALLOWED to use standard Greek letters (e.g., α, β, ∑) and standard punctuation. 
+    3. **SYMBOLS:** You ARE ALLOWED to use standard Greek letters (e.g., α, β, ∑) and standard mathematical notation.
     4. **NO MARKDOWN:** Do NOT use markdown bolding (like **text**) or headers.
     5. **LIMIT:** Maximum 4 critical points.
     6. **CONCISENESS:** Keep points short, precise, and direct.
@@ -320,17 +318,17 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION (UPDATED WITH SANITIZATION)
+# 7. PDF GENERATION (UNICODE ENABLED)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    # 1. Sanitize text: Fix smart quotes, but keep Greek letters
+    # 1. Sanitize text (fix smart quotes, keep Greek)
     full_text_processed = sanitize_text_for_pdf(full_report_text)
 
     pdf = FPDF()
     pdf.add_page()
 
     # --- FONT SETUP ---
-    # Attempt to load DejaVuSans to support Greek letters
+    # NOTE: 'DejaVuSans.ttf' MUST be in your project folder.
     font_family = "Arial"
     font_path = "DejaVuSans.ttf"
 
@@ -339,9 +337,9 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
             pdf.add_font('DejaVu', '', font_path, uni=True)
             font_family = 'DejaVu'
         except Exception as e:
-            print(f"Warning: Could not load DejaVu font: {e}")
+            print(f"Warning: Failed to load DejaVu font: {e}")
     else:
-        print("Warning: DejaVuSans.ttf not found. Greek symbols will fail.")
+        print("Warning: DejaVuSans.ttf not found. Greek symbols will appear as '?'.")
 
     # --- HEADER GENERATION ---
     pdf.set_font(font_family, '', 16)
@@ -369,10 +367,10 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     lines = full_text_processed.split('\n')
     for line in lines:
         if font_family == 'DejaVu':
-            # Unicode is supported, print as is
+            # Unicode supported - keep original Greek letters
             clean = line.strip()
         else:
-            # Fallback (font missing): Must replace Greek chars to avoid crash
+            # Fallback: Greek letters will become ? to prevent crashing
             clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
 
         if "DECISION: REJECT" in clean:
