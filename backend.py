@@ -290,7 +290,7 @@ def generate_section_review(client, section_name, section_text, paper_title):
     **STRICT RULES:**
     1. **NO MODIFICATION:** Do NOT attempt to rewrite, fix, or modify the data/text. Only review it.
     2. **NEUTRALITY:** Be objective. Do not praise. Only raise verification points.
-    3. **SYMBOLS:** You ARE ALLOWED to use standard Greek letters (e.g., α, β, ∑) and standard mathematical notation.
+    3. **SYMBOLS:** You MUST use standard Greek letters (e.g., α, β, ∑) and standard mathematical notation where appropriate. Do NOT spell them out.
     4. **NO MARKDOWN:** Do NOT use markdown bolding (like **text**) or headers.
     5. **LIMIT:** Maximum 4 critical points.
     6. **CONCISENESS:** Keep points short, precise, and direct.
