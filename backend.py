@@ -231,7 +231,7 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 
 
 # ==============================================================================
-# 6. SECTION REVIEW (GPT-5) - UPDATED FOR MAX 4 POINTS
+# 6. SECTION REVIEW (GPT-5) - GREEK LETTERS ALLOWED
 # ==============================================================================
 def generate_section_review(client, section_name, section_text, paper_title):
     clean_name = section_name.upper().strip()
@@ -261,8 +261,8 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
     **INSTRUCTIONS ON FIGURES & TABLES:**
     1. You cannot see the images.
-    3. **Raise Clarification:** If the text description of a Figure or Table is ambiguous, contradictory, or missing necessary context, explicitly raise a clarification point.
-    4. Do not attempt to guess the visual content.
+    2. **Raise Clarification:** If the text description of a Figure or Table is ambiguous, contradictory, or missing necessary context, explicitly raise a clarification point.
+    3. Do not attempt to guess the visual content.
 
     **CRITICAL INSTRUCTION: Ignore OCR & Formatting Artifacts.**
     - You will encounter text errors like "de- cision" (split words) or "??" (missing Greek symbols).
@@ -293,7 +293,7 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION (UPDATED HEADER)
+# 7. PDF GENERATION (UPDATED HEADER & FONT SUPPORT)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
     full_text_processed = full_report_text
@@ -302,6 +302,7 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     pdf.add_page()
 
     # --- FONT SETUP ---
+    # NOTE: You MUST have 'DejaVuSans.ttf' in the folder for Greek/Math symbols to work.
     font_family = "Arial"
     font_path = "DejaVuSans.ttf"
 
@@ -311,6 +312,8 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
             font_family = 'DejaVu'
         except Exception as e:
             print(f"Warning: Could not load DejaVu font: {e}")
+    else:
+        print("Warning: DejaVuSans.ttf not found. Greek symbols may appear as '?'")
 
     # --- HEADER GENERATION ---
 
@@ -342,8 +345,10 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     lines = full_text_processed.split('\n')
     for line in lines:
         if font_family == 'DejaVu':
+            # Unicode supported - keep original text
             clean = line.strip()
         else:
+            # Fallback for Arial: Replace characters that would crash FPDF
             clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
 
         if "**DECISION:** REJECT" in clean:
