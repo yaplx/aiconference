@@ -9,7 +9,7 @@ import backend
 # ==========================================
 # 1. PAGE CONFIG & AUTHENTICATION
 # ==========================================
-st.set_page_config(page_title="Conference Desk Reviewer", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Conference Desk Reviewer", page_icon="⚖️")
 load_dotenv()
 
 # Session State Initialization
@@ -129,67 +129,69 @@ if st.session_state.processing and uploaded_files:
         status_text.text(f"Processing file {i + 1}/{len(uploaded_files)}: {uploaded_file.name}...")
 
         try:
-            # -- UI SETUP FOR LIVE VIEW --
+            # Create a dedicated viewing area for this file
             if show_details:
                 file_container = st.expander(f"📄 Processing: {uploaded_file.name}", expanded=True)
             else:
                 file_container = st.empty()
 
-            # We will store data here to ensure we can rebuild the UI later
-            saved_tabs_data = []
-            first_pass_content = ""
-
             with file_container:
-                # --- A. Extraction ---
+                # --- A. Extraction & Setup ---
                 uploaded_file.seek(0)
                 sections = backend.extract_sections_visual(uploaded_file)
                 full_text_clean = backend.combine_section_content(sections)
 
-                # Identify valid sections
+                # 1. CREATE TABS IMMEDIATELY
+                # We identify valid sections first so we can build the UI skeleton
                 valid_sections = [s for s in sections if
                                   not any(skip in s['title'].upper() for skip in backend.SKIP_REVIEW_SECTIONS)]
 
-                # Create Tabs
+                # Create a list of tab names: "First Pass" + all valid section titles
                 tab_names = ["🔍 First Pass"] + [s['title'] for s in valid_sections]
 
                 if show_details:
+                    # Renders the clickable tabs immediately
                     tabs = st.tabs(tab_names)
                     first_pass_tab = tabs[0]
-                    section_tabs = tabs[1:]
+                    section_tabs = tabs[1:]  # aligned with valid_sections list
                 else:
                     first_pass_tab = st.empty()
                     section_tabs = []
 
-                # --- B. First Pass ---
+                # --- B. First Pass (Desk Reject) ---
                 with first_pass_tab:
-                    st.info("Analyzing Abstract & Structure...")
-                    first_pass_content = backend.evaluate_first_pass(
+                    st.info("Analyzing Abstract & Overall Structure...")
+                    first_pass = backend.evaluate_first_pass(
                         client,
                         uploaded_file.name,
                         full_text_clean[:4000],
                         target_conference
                     )
-                    st.markdown(first_pass_content)
+                    st.markdown(first_pass)
 
-                report_log = f"\n\n--- FIRST PASS ---\n{first_pass_content}\n\n"
+                report_log = f"\n\n--- FIRST PASS ---\n{first_pass}\n\n"
                 decision = "PROCEED"
                 notes = "Standard review."
 
-                if "REJECT" in first_pass_content:
+                if "REJECT" in first_pass:
                     decision = "REJECT"
                     report_log += "**Skipping detailed section review due to rejection.**"
-                    if "REASON:" in first_pass_content:
-                        notes = first_pass_content.split("REASON:")[1].strip()
+                    if "REASON:" in first_pass:
+                        notes = first_pass.split("REASON:")[1].strip()
+
+                    if show_details:
+                        st.error("❌ Rejected. Stopping analysis for this file.")
                 else:
-                    # --- C. Second Pass ---
+                    # --- C. Second Pass (Section Review) ---
                     report_log += "--- SECTION ANALYSIS ---\n"
                     flagged_items = []
 
+                    # Process sections one by one, filling their respective tabs
                     for idx, sec in enumerate(valid_sections):
-                        current_tab = section_tabs[idx] if show_details else st.empty()
+                        current_tab = section_tabs[idx]
 
                         with current_tab:
-                            with st.spinner(f"Reading..."):
+                            with st.spinner(f"Analyzing {sec['title']}..."):
                                 feedback = backend.generate_section_review(
                                     client,
                                     sec['title'],
@@ -198,17 +200,13 @@ if st.session_state.processing and uploaded_files:
                                 )
 
                             if feedback:
-                                st.markdown(feedback)
+                                st.markdown(feedback)  # Show result in tab
                                 report_log += f"\n--- SECTION: {sec['title']} ---\n{feedback}\n"
-
-                                # SAVE THE DATA FOR RECONSTRUCTION
-                                saved_tabs_data.append({
-                                    "title": sec['title'],
-                                    "content": feedback
-                                })
 
                                 if "FLAGGED ISSUES" in feedback and "(None)" not in feedback:
                                     flagged_items.append(sec['title'])
+                            else:
+                                st.warning("No feedback generated.")
 
                     if flagged_items:
                         decision = "Accept w/ Suggestions"
@@ -216,18 +214,17 @@ if st.session_state.processing and uploaded_files:
                     else:
                         decision = "Accept"
 
-            # Generate PDF
-            pdf_bytes = backend.create_pdf_report(report_log, filename=uploaded_file.name)
+            report_text = report_log
 
-            # Store EVERYTHING needed to rebuild the exact same view
+            # --- GENERATE PDF ---
+            pdf_bytes = backend.create_pdf_report(report_text, filename=uploaded_file.name)
+
             temp_results.append({
                 'filename': uploaded_file.name,
                 'decision': decision,
                 'notes': notes,
-                'report_text': report_log,
-                'pdf_bytes': pdf_bytes,
-                'first_pass_content': first_pass_content,
-                'saved_tabs_data': saved_tabs_data
+                'report_text': report_text,
+                'pdf_bytes': pdf_bytes
             })
 
         except Exception as e:
@@ -241,75 +238,49 @@ if st.session_state.processing and uploaded_files:
     st.rerun()
 
 # ==========================================
-# 5. RESULTS & DOWNLOADS (RECONSTRUCTED UI)
+# 5. RESULTS & DOWNLOADS
 # ==========================================
 if st.session_state.results:
     st.divider()
-    st.header("📥 Review Completed")
+    st.header("📥 Results & Downloads")
 
     results = st.session_state.results
 
-    # --- BATCH DOWNLOAD ---
+    # --- BATCH DOWNLOAD (ZIP) ---
     if len(results) > 1:
-        st.info("📦 **Batch Download Available**")
+        st.subheader("📦 Batch Download")
         zip_data = create_zip_of_reports(results)
+
         st.download_button(
             label=f"⬇️ Download All {len(results)} Reports (.zip)",
             data=zip_data,
-            file_name="Conference_Reviews_Batch.zip",
+            file_name="All_Reviews.zip",
             mime="application/zip",
             type="primary"
         )
-        st.divider()
+        st.write("---")
 
-    # --- REBUILD THE VIEW ---
+    # --- INDIVIDUAL REPORTS ---
+    st.subheader("📄 Individual Files")
+
     for res in results:
-        # Determine icon based on decision
-        icon = "✅" if res['decision'] == "Accept" else "⚠️" if "Suggestions" in res['decision'] else "❌"
+        with st.expander(f"{res['filename']} - [{res['decision']}]"):
+            col_a, col_b = st.columns([1, 3])
 
-        # 1. Create the Expander (matches the processing view)
-        with st.expander(f"{icon} {res['filename']}  |  Decision: {res['decision']}", expanded=True):
-
-            # 2. Download Button & Notes
-            c1, c2 = st.columns([1, 4])
-            with c1:
+            with col_a:
                 st.download_button(
-                    label="⬇️ Download PDF Report",
+                    label="⬇️ Download PDF",
                     data=res['pdf_bytes'],
                     file_name=f"Report_{res['filename']}.pdf",
-                    mime="application/pdf",
-                    type="primary"
+                    mime="application/pdf"
                 )
-            with c2:
-                if res['notes']:
-                    st.info(f"**Notes:** {res['notes']}")
 
-            st.divider()
+            with col_b:
+                st.info(f"**Notes:** {res['notes']}")
 
-            # 3. RECONSTRUCT TABS
-            # We use the saved data to rebuild the tabs exactly as they appeared
-            saved_sections = res.get('saved_tabs_data', [])
+            # Optional: Final text view
+            st.text_area("Final Report Text", res['report_text'], height=200)
 
-            if saved_sections:
-                # Titles: First Pass + All Sections
-                tab_titles = ["🔍 First Pass"] + [s['title'] for s in saved_sections]
-                result_tabs = st.tabs(tab_titles)
-
-                # Fill First Pass
-                with result_tabs[0]:
-                    st.markdown(res.get('first_pass_content', "No data."))
-
-                # Fill Section Tabs
-                for i, sec_data in enumerate(saved_sections):
-                    with result_tabs[i + 1]:
-                        st.markdown(sec_data['content'])
-            else:
-                # Fallback (e.g., if rejected in first pass)
-                st.write("**First Pass Result:**")
-                st.markdown(res.get('first_pass_content', "No content available."))
-
-    # Restart Button
-    st.divider()
     if st.button("Start New Review"):
         st.session_state.results = None
         st.rerun()
