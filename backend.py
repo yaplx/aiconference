@@ -117,18 +117,23 @@ def combine_section_content(sections):
 
 def sanitize_text_for_pdf(text):
     """
-    Replaces 'Smart Quotes' with standard ASCII quotes to prevent errors,
-    BUT preserves Greek letters and other Unicode characters.
+    Cleans text to ensure PDF compatibility.
+    1. Normalizes specific math symbols (minus signs) to hyphens.
+    2. Fixes smart quotes.
+    3. Removes markdown bolding.
     """
     replacements = {
-        u'\u2018': "'",
-        u'\u2019': "'",
-        u'\u201c': '"',
-        u'\u201d': '"',
+        # --- QUOTES & DASHES ---
+        u'\u2018': "'",  # Left single quote
+        u'\u2019': "'",  # Right single quote
+        u'\u201c': '"',  # Left double quote
+        u'\u201d': '"',  # Right double quote
         u'\u2013': '-',  # En dash
         u'\u2014': '-',  # Em dash
-        u'\u2026': '...',  # Ellipsis
-        "**": ""  # Remove markdown bolding
+        u'\u2212': '-',  # Mathematical Minus Sign (Standard keyboard is Hyphen-Minus)
+
+        # --- MARKDOWN REMOVAL ---
+        "**": ""
     }
 
     for char, replacement in replacements.items():
@@ -321,25 +326,27 @@ def generate_section_review(client, section_name, section_text, paper_title):
 # 7. PDF GENERATION (UNICODE ENABLED)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    # 1. Sanitize text (fix smart quotes, keep Greek)
+    # 1. Sanitize text (fix dashes/quotes/bolding)
     full_text_processed = sanitize_text_for_pdf(full_report_text)
 
     pdf = FPDF()
     pdf.add_page()
 
     # --- FONT SETUP ---
-    # NOTE: 'DejaVuSans.ttf' MUST be in your project folder.
-    font_family = "Arial"
     font_path = "DejaVuSans.ttf"
+    font_family = "Arial"  # Default fallback
 
+    # Check for Unicode font
     if os.path.exists(font_path):
         try:
             pdf.add_font('DejaVu', '', font_path, uni=True)
             font_family = 'DejaVu'
         except Exception as e:
             print(f"Warning: Failed to load DejaVu font: {e}")
+            font_family = "Arial"
     else:
         print("Warning: DejaVuSans.ttf not found. Greek symbols will appear as '?'.")
+        font_family = "Arial"
 
     # --- HEADER GENERATION ---
     pdf.set_font(font_family, '', 16)
@@ -370,7 +377,7 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
             # Unicode supported - keep original Greek letters
             clean = line.strip()
         else:
-            # Fallback: Greek letters will become ? to prevent crashing
+            # Fallback: Greek letters will become ? to prevent crashing if font is missing
             clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
 
         if "DECISION: REJECT" in clean:
