@@ -202,6 +202,11 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 
     Task: Perform a Desk Reject Check.
 
+    **STRICT GUIDELINES:**
+    1. **NEUTRALITY:** Maintain a strictly neutral and objective tone.
+    2. **READ-ONLY:** Do NOT modify, rewrite, or correct the abstract content. Your job is only to analyze.
+    3. **NO MARKDOWN:** Do not use bolding (**text**) or italics (*text*) in your output decision.
+
     **CRITICAL INSTRUCTION: Ignore OCR Artifacts.**
     - Do NOT flag issues related to broken hyphenation (e.g., "de- cision").
     - Focus ONLY on the semantic content and scientific value.
@@ -213,12 +218,12 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 
     OUTPUT FORMAT:
     Option 1 (If Reject):
-    **DECISION:** REJECT
-    **REASON:** The paper is not relevant to the conference theme.
+    DECISION: REJECT
+    REASON: The paper is not relevant to the conference theme.
 
     Option 2 (If Proceed):
-    **DECISION:** PROCEED
-    **REASON:** Relevant topic and standard structure.
+    DECISION: PROCEED
+    REASON: Relevant topic and standard structure.
     """
     try:
         response = client.chat.completions.create(
@@ -231,7 +236,7 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 
 
 # ==============================================================================
-# 6. SECTION REVIEW (GPT-5) - GREEK LETTERS ALLOWED
+# 6. SECTION REVIEW (GPT-5) - UPDATED REQUIREMENTS
 # ==============================================================================
 def generate_section_review(client, section_name, section_text, paper_title):
     clean_name = section_name.upper().strip()
@@ -253,30 +258,33 @@ def generate_section_review(client, section_name, section_text, paper_title):
         section_focus = "Focus on: Whether the conclusion is supported by the experiments presented."
 
     prompt = f"""
-    You are a reviewer assistant of the conference.
+    You are a strictly neutral reviewer assistant.
     Paper: "{paper_title}"
     Section: "{section_name}"
 
-    Task: Flag issues needing human check. {section_focus}
+    Task: Identify critical issues that require manual verification by a human expert. {section_focus}
+
+    **STRICT RULES:**
+    1. **NO MODIFICATION:** Do NOT attempt to rewrite, fix, or modify the data/text. Only review it.
+    2. **NEUTRALITY:** Be objective. Do not praise. Only raise verification points.
+    3. **SYMBOLS:** Use pure text. Greek letters (e.g., α, β, ∑) ARE allowed.
+    4. **NO MARKDOWN:** Do NOT use markdown bolding (like **text**) or headers. The output must be clean text for PDF generation.
+    5. **LIMIT:** Maximum 4 critical points.
+    6. **CONCISENESS:** Keep points short, precise, and direct.
 
     **INSTRUCTIONS ON FIGURES & TABLES:**
     1. You cannot see the images.
-    2. **Raise Clarification:** If the text description of a Figure or Table is ambiguous, contradictory, or missing necessary context, explicitly raise a clarification point.
+    2. Raise Clarification: If the text description of a Figure or Table is ambiguous, contradictory, or missing necessary context, explicitly raise a clarification point.
     3. Do not attempt to guess the visual content.
 
-    **CRITICAL INSTRUCTION: Ignore OCR & Formatting Artifacts.**
-    - You will encounter text errors like "de- cision" (split words) or "??" (missing Greek symbols).
-    - **DO NOT** flag these as errors.
-    - **DO NOT** mention "typos" or "formatting issues" unless the text is completely unreadable.
-
     OUTPUT FORMAT:
-    **STATUS:** [ACCEPT / ACCEPT WITH SUGGESTIONS]
+    STATUS: [ACCEPT / ACCEPT WITH SUGGESTIONS]
 
-    **FLAGGED ISSUES (Max 4 critical points):**
-    - (Point 1...)
-    - (Point 2...)
-    - (Point 3...)
-    - (Point 4...)
+    FLAGGED ISSUES (Max 4 critical points):
+    - [Point 1]
+    - [Point 2]
+    - [Point 3]
+    - [Point 4]
     (Leave empty if ACCEPT)
 
     Section Content:
@@ -293,10 +301,11 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION (UPDATED HEADER & FONT SUPPORT)
+# 7. PDF GENERATION (UPDATED HEADER & CLEANING)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    full_text_processed = full_report_text
+    # Force removal of any markdown bolding that might have slipped through
+    full_text_processed = full_report_text.replace("**", "")
 
     pdf = FPDF()
     pdf.add_page()
@@ -351,11 +360,11 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
             # Fallback for Arial: Replace characters that would crash FPDF
             clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
 
-        if "**DECISION:** REJECT" in clean:
+        if "DECISION: REJECT" in clean:
             pdf.set_text_color(200, 0, 0)  # Red
             pdf.cell(0, 10, txt=clean, ln=True)
             pdf.set_text_color(0, 0, 0)
-        elif "**DECISION:** PROCEED" in clean:
+        elif "DECISION: PROCEED" in clean:
             pdf.set_text_color(0, 150, 0)  # Green
             pdf.cell(0, 10, txt=clean, ln=True)
             pdf.set_text_color(0, 0, 0)
