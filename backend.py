@@ -3,9 +3,10 @@ import re
 import csv
 import io
 import os
+import glob
 from openai import OpenAI
 from fpdf import FPDF
-import prompts  # <--- Imported prompts
+import prompts  #
 
 # ==============================================================================
 # 1. CONFIGURATION & CONSTANTS
@@ -111,7 +112,6 @@ def _get_mapped_title(text):
 def combine_section_content(sections):
     """
     Helper to join all section content into a single string.
-    Used for the First Pass (Desk Reject) prompt.
     """
     full_text = []
     for sec in sections:
@@ -193,15 +193,15 @@ def extract_sections_visual(uploaded_file):
 
 
 # ==============================================================================
-# 5. FIRST PASS EVALUATION (GPT-5) - UPDATED TO USE PROMPTS.PY
+# 5. FIRST PASS EVALUATION (Uses prompts.py)
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
-    # Fetch prompt from prompts.py
+    # Fetch prompt from external file
     prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
 
     try:
         response = client.chat.completions.create(
-            model="gpt-5",
+            model="gpt-5",  # Tries GPT-5 first
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
@@ -210,7 +210,7 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 
 
 # ==============================================================================
-# 6. SECTION REVIEW (GPT-5) - UPDATED TO USE PROMPTS.PY
+# 6. SECTION REVIEW (Uses prompts.py)
 # ==============================================================================
 def generate_section_review(client, section_name, section_text, paper_title):
     clean_name = section_name.upper().strip()
@@ -231,7 +231,7 @@ def generate_section_review(client, section_name, section_text, paper_title):
     elif "CONCLUSION" in clean_name:
         section_focus = "Focus on: Whether the conclusion is supported by the experiments presented."
 
-    # Fetch prompt from prompts.py
+    # Fetch prompt from external file
     prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
 
     try:
@@ -245,19 +245,52 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION (EXACTLY AS PROVIDED IN YOUR WORKING VERSION)
+# 7. PDF GENERATION (ROBUST FONT FINDER)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    full_text_processed = full_report_text
+    # 0. Clean up old cache files that might cause "Ghost Path" errors
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        for pkl_file in glob.glob(os.path.join(base_dir, "*.pkl")):
+            try:
+                os.remove(pkl_file)
+            except:
+                pass
+    except:
+        pass
 
+    full_text_processed = full_report_text
     pdf = FPDF()
     pdf.add_page()
 
-    # --- FONT SETUP ---
-    font_family = "Arial"
-    font_path = "DejaVuSans.ttf"
+    # --- ROBUST FONT LOADING ---
+    base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    if os.path.exists(font_path):
+    # 1. Search for DejaVuSans.ttf in potential locations
+    search_paths = [
+        os.path.join(base_dir, "dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf"),  # User specific path
+        os.path.join(base_dir, "dejavu-sans-ttf-2.37", "DejaVuSans.ttf"),
+        os.path.join(base_dir, "ttf", "DejaVuSans.ttf"),
+        os.path.join(base_dir, "DejaVuSans.ttf"),
+        "DejaVuSans.ttf"
+    ]
+
+    font_path = None
+    # Check explicit paths first
+    for p in search_paths:
+        if os.path.exists(p):
+            font_path = p
+            break
+
+    # If not found, recursively search the whole project folder
+    if not font_path:
+        for root, dirs, files in os.walk(base_dir):
+            if "DejaVuSans.ttf" in files:
+                font_path = os.path.join(root, "DejaVuSans.ttf")
+                break
+
+    font_family = "Arial"  # Default fallback
+    if font_path:
         try:
             pdf.add_font('DejaVu', '', font_path, uni=True)
             font_family = 'DejaVu'
@@ -265,14 +298,12 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
             print(f"Warning: Could not load DejaVu font: {e}")
 
     # --- HEADER GENERATION ---
-
-    # 1. Main Title
     pdf.set_font(font_family, '', 16)
     pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(2)
 
-    # 2. Header Disclaimer (Gray, Small)
-    pdf.set_text_color(100, 100, 100)  # Gray
+    # Disclaimer
+    pdf.set_text_color(100, 100, 100)
     pdf.set_font(font_family, '', 8)
     header_disclaimer = (
         "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
@@ -282,8 +313,8 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     pdf.multi_cell(0, 4, header_disclaimer, align='C')
     pdf.ln(8)
 
-    # 3. "REPORT FOR" Line (Black, Larger)
-    pdf.set_text_color(0, 0, 0)  # Black
+    # Report Title
+    pdf.set_text_color(0, 0, 0)
     pdf.set_font(font_family, '', 14)
     pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
     pdf.ln(2)
@@ -296,6 +327,7 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
         if font_family == 'DejaVu':
             clean = line.strip()
         else:
+            # Fallback: remove incompatible characters to prevent crash
             clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
 
         if "**DECISION:** REJECT" in clean:
