@@ -320,4 +320,8 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
 # ==============================================================================
 def create_batch_csv(paper_results_list):
     output = io.StringIO()
-    writer = csv.
+    writer = csv.writer(output)
+    writer.writerow(["Filename", "Decision", "Comments"])
+    for p in paper_results_list:
+        writer.writerow([p['filename'], p['decision'], p['notes']])
+    return output.getvalue()
