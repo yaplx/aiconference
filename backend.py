@@ -3,6 +3,7 @@ import re
 import csv
 import io
 import os
+import glob  # Added to find cache files
 from openai import OpenAI
 from fpdf import FPDF
 import prompts  # Imports your local prompts.py file
@@ -166,20 +167,27 @@ def extract_sections_visual(uploaded_file):
 
 
 # ==============================================================================
-# 4. REVIEW LOGIC (GPT-5)
+# 4. REVIEW LOGIC (GPT-5 & PROMPTS)
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
-    # Load prompt from external file
     prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
-
     try:
         response = client.chat.completions.create(
-            model="gpt-5",
+            model="gpt-5",  # Tries GPT-5 first
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Error with gpt-5: {str(e)}"
+        # Fallback to prevent crash if GPT-5 is unavailable
+        try:
+            print(f"GPT-5 Error ({e}), falling back to GPT-4o...")
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+        except Exception as e2:
+            return f"Error: {str(e2)}"
 
 
 def generate_section_review(client, section_name, section_text, paper_title):
@@ -200,23 +208,41 @@ def generate_section_review(client, section_name, section_text, paper_title):
     elif "CONCLUSION" in clean_name:
         section_focus = "Focus on: Whether conclusion is supported."
 
-    # Load prompt from external file
     prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
-
     try:
         response = client.chat.completions.create(
-            model="gpt-5",
+            model="gpt-5",  # Tries GPT-5 first
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Error with gpt-5: {str(e)}"
+        try:
+            print(f"GPT-5 Error ({e}), falling back to GPT-4o...")
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+        except Exception as e2:
+            return f"Error: {str(e2)}"
 
 
 # ==============================================================================
-# 5. PDF GENERATION (CRASH PROOF)
+# 5. PDF GENERATION (CRASH PROOF & CACHE CLEANER)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
+    # 0. CLEANUP BAD CACHE FILES
+    # This deletes any .pkl files created by FPDF on your Windows machine
+    # that are causing the "C:/Users/..." path error.
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        for pkl_file in glob.glob(os.path.join(base_dir, "*.pkl")):
+            if "DejaVu" in pkl_file:
+                print(f"Deleting cached font file: {pkl_file}")
+                os.remove(pkl_file)
+    except Exception as e:
+        print(f"Cache cleanup warning: {e}")
+
     # 1. Sanitize text
     full_text_processed = sanitize_text_for_pdf(full_report_text)
 
@@ -230,7 +256,6 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     font_family = "Arial"
     unicode_font_loaded = False
 
-    # Try loading Unicode font
     try:
         if os.path.exists(font_path_1):
             pdf.add_font('DejaVu', '', font_path_1, uni=True)
@@ -240,10 +265,11 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
             pdf.add_font('DejaVu', '', font_path_2, uni=True)
             font_family = 'DejaVu'
             unicode_font_loaded = True
-    except:
-        pass
+        else:
+            print("Warning: DejaVu font not found. Using Arial.")
+    except Exception as e:
+        print(f"Font loading error: {e}")
 
-        # Add Page must happen AFTER font definition
     pdf.add_page()
 
     # Header
@@ -257,7 +283,6 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
         clean = line.strip()
 
         # CRITICAL SAFETY: If we are using Arial (non-unicode), we must remove special chars
-        # or the PDF generation will crash.
         if not unicode_font_loaded:
             clean = clean.encode('latin-1', 'replace').decode('latin-1')
 
@@ -268,8 +293,6 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
             pdf.multi_cell(0, 5, clean)
 
     # RETURN BYTES SAFELY
-    # This ensures we NEVER return that fake error PDF.
-    # 'replace' handles any character that fits neither font.
     return pdf.output(dest="S").encode("latin-1", "replace")
 
 
