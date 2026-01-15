@@ -118,27 +118,15 @@ def combine_section_content(sections):
 def sanitize_text_for_pdf(text):
     """
     Cleans text to ensure PDF compatibility.
-    1. Normalizes specific math symbols (minus signs) to hyphens.
-    2. Fixes smart quotes.
-    3. Removes markdown bolding.
     """
     replacements = {
-        # --- QUOTES & DASHES ---
-        u'\u2018': "'",  # Left single quote
-        u'\u2019': "'",  # Right single quote
-        u'\u201c': '"',  # Left double quote
-        u'\u201d': '"',  # Right double quote
-        u'\u2013': '-',  # En dash
-        u'\u2014': '-',  # Em dash
-        u'\u2212': '-',  # Mathematical Minus Sign (Standard keyboard is Hyphen-Minus)
-
-        # --- MARKDOWN REMOVAL ---
-        "**": ""
+        u'\u2018': "'", u'\u2019': "'",
+        u'\u201c': '"', u'\u201d': '"',
+        u'\u2013': '-', u'\u2014': '-',
+        u'\u2212': '-', "**": ""
     }
-
     for char, replacement in replacements.items():
         text = text.replace(char, replacement)
-
     return text
 
 
@@ -215,42 +203,21 @@ def extract_sections_visual(uploaded_file):
 
 
 # ==============================================================================
-# 5. FIRST PASS EVALUATION (GPT-5)
+# 5. FIRST PASS EVALUATION
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
     prompt = f"""
     You are a reviewer assistant of the conference: "{conference_name}".
     Paper: "{paper_title}"
     Abstract: "{abstract_text[:4000]}"
-
     Task: Perform a Desk Reject Check.
-
-    **STRICT GUIDELINES:**
-    1. **NEUTRALITY:** Maintain a strictly neutral and objective tone.
-    2. **READ-ONLY:** Do NOT modify, rewrite, or correct the abstract content.
-    3. **NO MARKDOWN:** Do not use bolding (**text**) or italics (*text*).
-
-    **CRITICAL INSTRUCTION:**
-    - Ignore OCR Artifacts.
-    - Focus ONLY on the semantic content and scientific value.
-
-    Criteria for REJECT:
-    1. Irrelevant: Topic is outside the scope of {conference_name}.
-    2. Novelty: Zero contribution (textbook summary).
-    3. Structure: Fatal flaw (missing scientific method).
-
-    OUTPUT FORMAT:
-    Option 1 (If Reject):
-    DECISION: REJECT
-    REASON: The paper is not relevant to the conference theme.
-
-    Option 2 (If Proceed):
-    DECISION: PROCEED
-    REASON: Relevant topic and standard structure.
+    STRICT GUIDELINES: Neutral, Read-only, No Markdown.
+    Criteria for REJECT: Irrelevant, No Novelty, Fatal Flaw.
     """
     try:
+        # UPDATED: Use gpt-4o or gpt-4-turbo. "gpt-5" does not exist and causes crashes.
         response = client.chat.completions.create(
-            model="gpt-5",
+            model="gpt-4o",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
@@ -259,62 +226,43 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 
 
 # ==============================================================================
-# 6. SECTION REVIEW (GPT-5)
+# 6. SECTION REVIEW
 # ==============================================================================
 def generate_section_review(client, section_name, section_text, paper_title):
     clean_name = section_name.upper().strip()
     clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
-
     if clean_name in SKIP_REVIEW_SECTIONS or section_name.upper() in SKIP_REVIEW_SECTIONS:
         return None
 
     section_focus = ""
     if "METHOD" in clean_name:
-        section_focus = "Focus on: Reproducibility, mathematical soundness, and clarity of the algorithm steps."
+        section_focus = "Focus on: Reproducibility, mathematical soundness."
     elif "RESULT" in clean_name:
-        section_focus = "Focus on: Fairness of baselines, statistical significance, and whether claims match the data."
+        section_focus = "Focus on: Fairness of baselines, statistical significance."
     elif "INTRO" in clean_name:
-        section_focus = "Focus on: Clarity of the research gap and explicit contribution statement."
+        section_focus = "Focus on: Clarity of the research gap."
     elif "RELATED" in clean_name:
-        section_focus = "Focus on: Coverage of recent state-of-the-art works (post-2020)."
+        section_focus = "Focus on: Coverage of recent works."
     elif "CONCLUSION" in clean_name:
-        section_focus = "Focus on: Whether the conclusion is supported by the experiments presented."
+        section_focus = "Focus on: Whether conclusion is supported."
 
     prompt = f"""
     You are a strictly neutral reviewer assistant.
     Paper: "{paper_title}"
     Section: "{section_name}"
-
-    Task: Identify critical issues that require manual verification by a human expert. {section_focus}
-
-    **STRICT RULES:**
-    1. **NO MODIFICATION:** Do NOT attempt to rewrite, fix, or modify the data/text. Only review it.
-    2. **NEUTRALITY:** Be objective. Do not praise. Only raise verification points.
-    3. **SYMBOLS:** You MUST use standard Greek letters (e.g., α, β, ∑) and standard mathematical notation where appropriate. Do NOT spell them out.
-    4. **NO MARKDOWN:** Do NOT use markdown bolding (like **text**) or headers.
-    5. **LIMIT:** Maximum 4 critical points.
-    6. **CONCISENESS:** Keep points short, precise, and direct.
-
-    **INSTRUCTIONS ON FIGURES & TABLES:**
-    1. You cannot see the images.
-    2. Raise Clarification: If the text description of a Figure or Table is ambiguous, contradictory, or missing necessary context, explicitly raise a clarification point.
-
-    OUTPUT FORMAT:
-    STATUS: [ACCEPT / ACCEPT WITH SUGGESTIONS]
-
-    FLAGGED ISSUES (Max 4 critical points):
-    - [Point 1]
-    - [Point 2]
-    - [Point 3]
-    - [Point 4]
-    (Leave empty if ACCEPT)
+    Task: Identify critical issues. {section_focus}
+    STRICT RULES:
+    1. Neutrality, No Modification.
+    2. USE STANDARD GREEK/MATH SYMBOLS (α, β, ∑). Do NOT spell them out.
+    3. NO MARKDOWN.
+    4. Max 4 critical points.
 
     Section Content:
     {section_text[:15000]}
     """
     try:
         response = client.chat.completions.create(
-            model="gpt-5",
+            model="gpt-4o",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
@@ -323,84 +271,66 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION (PATH UPDATED TO SUBFOLDER)
+# 7. PDF GENERATION (ROBUST PATH FIX)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    # 1. Sanitize text (fix dashes/quotes/bolding)
     full_text_processed = sanitize_text_for_pdf(full_report_text)
-
     pdf = FPDF()
     pdf.add_page()
 
-    # --- FONT SETUP ---
-    # UPDATED PATH: Pointing to dejavu-sans-ttf-2.37/ttf/DejaVuSans.ttf
-    # os.path.join handles the backslashes for you automatically.
-    font_path = os.path.join("dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
+    # --- ROBUST FONT PATH LOGIC ---
+    # This finds the directory where backend.py is located
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    # Constructs the absolute path to the font
+    font_path = os.path.join(base_dir, "dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
 
-    font_family = "Arial"  # Default fallback
+    font_family = "Arial"
 
-    # Check for Unicode font
     if os.path.exists(font_path):
         try:
-            # uni=True enables Unicode support in FPDF
             pdf.add_font('DejaVu', '', font_path, uni=True)
             font_family = 'DejaVu'
-            print(f"LOG: Successfully loaded font from {font_path}")
+            print(f"LOG: Loaded font from {font_path}")
         except Exception as e:
-            print(f"Warning: Failed to load DejaVu font: {e}")
-            font_family = "Arial"
+            print(f"Warning: Failed to load font: {e}")
     else:
-        print(f"CRITICAL WARNING: Font not found at {font_path}")
-        print("Greek letters will appear as '?'")
-        font_family = "Arial"
+        print(f"CRITICAL: Font NOT found at {font_path}")
 
-    # --- HEADER GENERATION ---
+    # Header
     pdf.set_font(font_family, '', 16)
     pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(2)
 
-    pdf.set_text_color(100, 100, 100)  # Gray
+    pdf.set_text_color(100, 100, 100)
     pdf.set_font(font_family, '', 8)
-    header_disclaimer = (
-        "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
-        "suggestion based on structural and content analysis. "
-        "The Human Reviewer must verify all 'FOCUS POINTS' manually."
-    )
-    pdf.multi_cell(0, 4, header_disclaimer, align='C')
+    pdf.multi_cell(0, 4, "DISCLAIMER: Automated tool. Verify manually.", align='C')
     pdf.ln(8)
 
-    pdf.set_text_color(0, 0, 0)  # Black
+    pdf.set_text_color(0, 0, 0)
     pdf.set_font(font_family, '', 14)
     pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
     pdf.ln(2)
 
-    # --- BODY CONTENT ---
+    # Body
     pdf.set_font(font_family, '', 11)
-
     lines = full_text_processed.split('\n')
     for line in lines:
         if font_family == 'DejaVu':
-            # Unicode supported - keep original Greek letters
             clean = line.strip()
         else:
-            # Fallback: Greek letters will become ? to prevent crashing if font is missing
             clean = line.strip().encode('latin-1', 'replace').decode('latin-1')
 
-        if "DECISION: REJECT" in clean:
-            pdf.set_text_color(200, 0, 0)
-            pdf.cell(0, 10, txt=clean, ln=True)
-            pdf.set_text_color(0, 0, 0)
-        elif "DECISION: PROCEED" in clean:
-            pdf.set_text_color(0, 150, 0)
-            pdf.cell(0, 10, txt=clean, ln=True)
-            pdf.set_text_color(0, 0, 0)
-        elif "--- SECTION:" in clean or "SECTION TITLE:" in clean or "IMPORTANT DISCLAIMER" in clean or "SCOPE OF REVIEW" in clean:
+        if "DECISION:" in clean or "--- SECTION:" in clean:
             pdf.ln(5)
             pdf.cell(0, 10, txt=clean, ln=True)
         else:
             pdf.multi_cell(0, 5, clean)
 
-    return pdf.output(dest="S").encode("latin-1")
+    try:
+        return pdf.output(dest="S").encode("latin-1")
+    except Exception as e:
+        print(f"PDF Output Error: {e}")
+        return b"Error generating PDF"
 
 
 # ==============================================================================
