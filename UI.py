@@ -254,7 +254,7 @@ if st.session_state.results:
         st.download_button(
             label=f"⬇️ Download All {len(results)} Reports (.zip)",
             data=zip_data,
-            file_name="Conference_Reviews_Batch.zip",
+            file_name="All_Reviews.zip",
             mime="application/zip",
             type="primary"
         )
