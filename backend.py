@@ -91,7 +91,6 @@ def combine_section_content(sections):
 
 
 def sanitize_text_for_pdf(text):
-    # Basic cleanup for common issues
     replacements = {
         u'\u2018': "'", u'\u2019': "'", u'\u201c': '"', u'\u201d': '"',
         u'\u2013': '-', u'\u2014': '-', u'\u2212': '-', "**": ""
@@ -167,19 +166,20 @@ def extract_sections_visual(uploaded_file):
 
 
 # ==============================================================================
-# 4. REVIEW LOGIC (USING PROMPTS.PY & GPT-5)
+# 4. REVIEW LOGIC (GPT-5)
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
     # Load prompt from external file
     prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
+
     try:
         response = client.chat.completions.create(
-            model="gpt-5",  # Using gpt-5 as requested
+            model="gpt-5",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error with gpt-5: {str(e)}"
 
 
 def generate_section_review(client, section_name, section_text, paper_title):
@@ -202,21 +202,24 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
     # Load prompt from external file
     prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
+
     try:
         response = client.chat.completions.create(
-            model="gpt-5",  # Using gpt-5 as requested
+            model="gpt-5",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error with gpt-5: {str(e)}"
 
 
 # ==============================================================================
-# 5. PDF GENERATION (ROBUST ENCODING FIX)
+# 5. PDF GENERATION (CRASH PROOF)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
+    # 1. Sanitize text
     full_text_processed = sanitize_text_for_pdf(full_report_text)
+
     pdf = FPDF()
 
     # --- FONT LOADING ---
@@ -238,9 +241,9 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
             font_family = 'DejaVu'
             unicode_font_loaded = True
     except:
-        pass  # Fallback to Arial if load fails
+        pass
 
-    # Add Page must happen AFTER font registration
+        # Add Page must happen AFTER font definition
     pdf.add_page()
 
     # Header
@@ -253,10 +256,9 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     for line in lines:
         clean = line.strip()
 
-        # SAFETY CHECK: If we are using Arial (non-unicode), we must remove special chars
+        # CRITICAL SAFETY: If we are using Arial (non-unicode), we must remove special chars
         # or the PDF generation will crash.
         if not unicode_font_loaded:
-            # Replace unknown characters with '?' instead of crashing
             clean = clean.encode('latin-1', 'replace').decode('latin-1')
 
         if "DECISION:" in clean or "--- SECTION:" in clean:
@@ -266,8 +268,8 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
             pdf.multi_cell(0, 5, clean)
 
     # RETURN BYTES SAFELY
-    # This prevents the "Error Generating Report" dummy file.
-    # It attempts to encode to latin-1, replacing any stubborn characters that fit neither font.
+    # This ensures we NEVER return that fake error PDF.
+    # 'replace' handles any character that fits neither font.
     return pdf.output(dest="S").encode("latin-1", "replace")
 
 
