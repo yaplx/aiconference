@@ -5,7 +5,7 @@ import io
 import os
 from openai import OpenAI
 from fpdf import FPDF
-import prompts  #
+import prompts  # Imports your local prompts.py file
 
 # ==============================================================================
 # 1. CONFIGURATION
@@ -130,9 +130,9 @@ def extract_sections_visual(uploaded_file):
 
         p_num, p_phrase = _parse_header_components(line)
         if p_num and _is_valid_numbered_header(p_num, p_phrase, expected_number):
-            detected_header = True;
+            detected_header = True
             is_numbered = True
-            num_str = p_num;
+            num_str = p_num
             phrase = p_phrase
         elif not detected_header and i + 1 < len(all_lines):
             num_match = re.match(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)$", line)
@@ -141,17 +141,17 @@ def extract_sections_visual(uploaded_file):
                 next_line = all_lines[i + 1].strip()
                 if len(next_line) < 30 and next_line and next_line[0].isupper():
                     if _is_valid_numbered_header(potential_num, next_line, expected_number):
-                        detected_header = True;
+                        detected_header = True
                         is_numbered = True
-                        num_str = potential_num;
+                        num_str = potential_num
                         phrase = next_line
                         i += 1
 
         if not detected_header:
             mapped_title = _get_mapped_title(line)
             if mapped_title:
-                detected_header = True;
-                is_numbered = False;
+                detected_header = True
+                is_numbered = False
                 phrase = mapped_title
 
         if detected_header:
@@ -169,12 +169,11 @@ def extract_sections_visual(uploaded_file):
 
 
 # ==============================================================================
-# 4. REVIEW LOGIC (GPT-5 & PROMPTS)
+# 4. REVIEW LOGIC (GPT-5)
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
-    # Load prompt from external file
+    # Load prompt from prompts.py
     prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
-
     try:
         response = client.chat.completions.create(
             model="gpt-5",
@@ -203,9 +202,8 @@ def generate_section_review(client, section_name, section_text, paper_title):
     elif "CONCLUSION" in clean_name:
         section_focus = "Focus on: Whether conclusion is supported."
 
-    # Load prompt from external file
+    # Load prompt from prompts.py
     prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
-
     try:
         response = client.chat.completions.create(
             model="gpt-5",
@@ -217,79 +215,61 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 5. PDF GENERATION (SIMPLE ARIAL - CRASH PROOF)
+# 5. PDF GENERATION (SIMPLE ARIAL)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    """
-    Generates a PDF using standard Arial.
-    Enforces Latin-1 encoding to prevent crashes from Greek/Special chars.
-    """
-    try:
-        # 1. Sanitize text
-        full_text_processed = sanitize_text_for_pdf(full_report_text)
+    pdf = FPDF()
+    pdf.add_page()
 
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", '', 11)
+    # Use Standard Arial (Built-in to FPDF, no file needed)
+    pdf.set_font("Arial", '', 11)
 
-        # --- HEADER ---
-        pdf.set_font("Arial", '', 16)
-        pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
-        pdf.ln(3)
+    # --- TITLE ---
+    pdf.set_font("Arial", '', 16)
+    pdf.cell(0, 10, txt="AI Paper Improvement Report", ln=True, align='C')
+    pdf.ln(3)
 
-        # --- DISCLAIMER ---
-        pdf.set_font("Arial", '', 8)
-        pdf.set_text_color(100, 100, 100)
+    # --- DISCLAIMER ---
+    pdf.set_font("Arial", '', 8)
+    pdf.set_text_color(100, 100, 100)
 
-        disclaimer_text = (
-            "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
-            "suggestion based on structural and content analysis."
-        )
-        pdf.multi_cell(0, 4, txt=disclaimer_text, align='C')
-        pdf.ln(10)
+    disclaimer_text = (
+        "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
+        "suggestion based on structural and content analysis."
+    )
+    pdf.multi_cell(0, 4, txt=disclaimer_text, align='C')
+    pdf.ln(10)
 
-        # --- METADATA ---
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Arial", '', 14)
-        pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
-        pdf.ln(2)
+    # --- METADATA ---
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", '', 14)
+    pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
+    pdf.ln(2)
 
-        # --- BODY ---
-        pdf.set_font("Arial", '', 12)
+    # --- BODY ---
+    pdf.set_font("Arial", '', 12)
 
-        lines = full_text_processed.split('\n')
-        for line in lines:
-            clean = line.strip()
+    # Sanitize text (Markdown removal etc)
+    clean_text = sanitize_text_for_pdf(full_report_text)
 
-            # CRITICAL: Force Latin-1. Replace unknown chars with '?'
-            clean = clean.encode('latin-1', 'replace').decode('latin-1')
+    lines = clean_text.split('\n')
+    for line in lines:
+        safe_line = line.strip()
 
-            if "DECISION: REJECT" in clean:
-                pdf.set_text_color(200, 0, 0)
-                pdf.cell(0, 10, txt=clean, ln=True)
-                pdf.set_text_color(0, 0, 0)
-            elif "DECISION: PROCEED" in clean:
-                pdf.set_text_color(0, 150, 0)
-                pdf.cell(0, 10, txt=clean, ln=True)
-                pdf.set_text_color(0, 0, 0)
-            elif "--- SECTION:" in clean or "SECTION TITLE:" in clean:
-                pdf.ln(5)
-                pdf.cell(0, 10, txt=clean, ln=True)
-            else:
-                pdf.multi_cell(0, 5, clean)
+        # Force Latin-1 encoding.
+        # This replaces any unsupported characters (like Greek letters) with '?'
+        # preventing the "UnicodeEncodeError" that crashes the PDF.
+        safe_line = safe_line.encode('latin-1', 'replace').decode('latin-1')
 
-        return pdf.output(dest="S").encode("latin-1")
+        if "DECISION:" in safe_line or "--- SECTION:" in safe_line:
+            pdf.ln(5)
+            pdf.cell(0, 10, txt=safe_line, ln=True)
+        else:
+            pdf.multi_cell(0, 5, safe_line)
 
-    except Exception as e:
-        # Fallback to simple text PDF if something totally unexpected happens
-        try:
-            rescue = FPDF()
-            rescue.add_page()
-            rescue.set_font("Arial", "", 12)
-            rescue.multi_cell(0, 5, f"Critical PDF Error: {str(e)}\n\nRaw Content:\n{full_report_text}")
-            return rescue.output(dest="S").encode("latin-1", 'replace')
-        except:
-            return b"Error: Could not generate PDF."
+    # Return valid PDF bytes
+    # We use 'replace' again during output to be absolutely safe
+    return pdf.output(dest="S").encode("latin-1", "replace")
 
 
 # ==============================================================================
