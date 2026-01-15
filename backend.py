@@ -5,56 +5,35 @@ import io
 import os
 from openai import OpenAI
 from fpdf import FPDF
-import prompts  # <--- IMPORT THE NEW PROMPTS FILE
+import prompts  # Imports your local prompts.py
 
 # ==============================================================================
-# 1. CONFIGURATION & CONSTANTS
+# 1. CONFIGURATION
 # ==============================================================================
-
 HEADER_MAP = {
-    "ABSTRACT": "ABSTRACT",
-    "INTRODUCTION": "INTRODUCTION",
-    "RELATED WORK": "RELATED WORK",
-    "LITERATURE REVIEW": "RELATED WORK",
-    "BACKGROUND": "RELATED WORK",
-    "REFERENCES": "REFERENCES",
-    "BIBLIOGRAPHY": "REFERENCES",
-    "ACKNOWLEDGMENT": "ACKNOWLEDGMENT",
-    "ACKNOWLEDGEMENTS": "ACKNOWLEDGMENT",
-    "APPENDIX": "APPENDIX",
-    "APPENDICES": "APPENDIX",
-    "DECLARATION": "DECLARATION"
+    "ABSTRACT": "ABSTRACT", "INTRODUCTION": "INTRODUCTION",
+    "RELATED WORK": "RELATED WORK", "LITERATURE REVIEW": "RELATED WORK",
+    "BACKGROUND": "RELATED WORK", "REFERENCES": "REFERENCES",
+    "BIBLIOGRAPHY": "REFERENCES", "ACKNOWLEDGMENT": "ACKNOWLEDGMENT",
+    "ACKNOWLEDGEMENTS": "ACKNOWLEDGMENT", "APPENDIX": "APPENDIX",
+    "APPENDICES": "APPENDIX", "DECLARATION": "DECLARATION"
 }
-
 SKIP_REVIEW_SECTIONS = [
-    "ABSTRACT",
-    "PREAMBLE",
-    "PREAMBLE/INTRODUCTION",
-    "REFERENCES",
-    "BIBLIOGRAPHY",
-    "ACKNOWLEDGMENT",
-    "APPENDIX",
-    "DECLARATION"
+    "ABSTRACT", "PREAMBLE", "PREAMBLE/INTRODUCTION", "REFERENCES",
+    "BIBLIOGRAPHY", "ACKNOWLEDGMENT", "APPENDIX", "DECLARATION"
 ]
-
 IGNORE_CAPTION_KEYWORDS = [
-    "FIGURE", "FIG", "FIG.",
-    "TABLE", "TAB", "TAB.",
-    "IMAGE", "IMG", "IMG.",
-    "CHART", "GRAPH", "DIAGRAM",
-    "EQ", "EQUATION"
+    "FIGURE", "FIG", "FIG.", "TABLE", "TAB", "TAB.",
+    "IMAGE", "IMG", "IMG.", "CHART", "GRAPH", "DIAGRAM", "EQ", "EQUATION"
 ]
 
 
-# ==============================================================================
-# 2. INITIALIZATION
-# ==============================================================================
 def get_openai_client(api_key):
     return OpenAI(api_key=api_key)
 
 
 # ==============================================================================
-# 3. HELPER FUNCTIONS
+# 2. HELPER FUNCTIONS
 # ==============================================================================
 def roman_to_int(s):
     roman_map = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
@@ -78,19 +57,15 @@ def roman_to_int(s):
 def _parse_header_components(text):
     pattern = re.compile(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)\s+([A-Z].*)$")
     match = pattern.match(text)
-    if match:
-        return match.group(1), match.group(3).strip()
+    if match: return match.group(1), match.group(3).strip()
     return None, None
 
 
 def _is_valid_numbered_header(num_str, phrase, expected_number):
     if len(phrase) >= 30: return False
-
     clean_phrase = phrase.upper().strip()
     for keyword in IGNORE_CAPTION_KEYWORDS:
-        if clean_phrase.startswith(keyword):
-            return False
-
+        if clean_phrase.startswith(keyword): return False
     current_val = 0
     if num_str.isdigit():
         current_val = int(num_str)
@@ -103,8 +78,7 @@ def _is_valid_numbered_header(num_str, phrase, expected_number):
 
 def _get_mapped_title(text):
     clean_upper = text.upper().strip().replace(":", "")
-    if clean_upper in HEADER_MAP:
-        return HEADER_MAP[clean_upper]
+    if clean_upper in HEADER_MAP: return HEADER_MAP[clean_upper]
     return None
 
 
@@ -118,39 +92,26 @@ def combine_section_content(sections):
 
 def sanitize_text_for_pdf(text):
     """
-    Cleans text to ensure PDF compatibility.
-    1. Normalizes specific math symbols (minus signs) to hyphens.
-    2. Fixes smart quotes.
-    3. Removes markdown bolding.
+    Basic cleanup.
+    Note: If the Unicode font fails to load, we will do a more aggressive
+    cleanup inside create_pdf_report to prevent crashes.
     """
     replacements = {
-        # --- QUOTES & DASHES ---
-        u'\u2018': "'",  # Left single quote
-        u'\u2019': "'",  # Right single quote
-        u'\u201c': '"',  # Left double quote
-        u'\u201d': '"',  # Right double quote
-        u'\u2013': '-',  # En dash
-        u'\u2014': '-',  # Em dash
-        u'\u2212': '-',  # Mathematical Minus Sign
-
-        # --- MARKDOWN REMOVAL ---
-        "**": ""
+        u'\u2018': "'", u'\u2019': "'", u'\u201c': '"', u'\u201d': '"',
+        u'\u2013': '-', u'\u2014': '-', u'\u2212': '-', "**": ""
     }
-
     for char, replacement in replacements.items():
         text = text.replace(char, replacement)
-
     return text
 
 
 # ==============================================================================
-# 4. MAIN SECTIONING LOGIC
+# 3. EXTRACTION
 # ==============================================================================
 def extract_sections_visual(uploaded_file):
     uploaded_file.seek(0)
     file_bytes = uploaded_file.read()
     doc = fitz.open(stream=file_bytes, filetype="pdf")
-
     all_lines = []
     for page in doc:
         text = page.get_text("text")
@@ -163,20 +124,17 @@ def extract_sections_visual(uploaded_file):
     sections = []
     current_section = {"title": "Preamble/Introduction", "content": ""}
     expected_number = 1
-
     i = 0
     while i < len(all_lines):
         line = all_lines[i]
         detected_header = False
-        num_str = ""
-        phrase = ""
-        is_numbered = False
+        num_str, phrase, is_numbered = "", "", False
 
         p_num, p_phrase = _parse_header_components(line)
         if p_num and _is_valid_numbered_header(p_num, p_phrase, expected_number):
-            detected_header = True
+            detected_header = True;
             is_numbered = True
-            num_str = p_num
+            num_str = p_num;
             phrase = p_phrase
         elif not detected_header and i + 1 < len(all_lines):
             num_match = re.match(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)$", line)
@@ -185,22 +143,21 @@ def extract_sections_visual(uploaded_file):
                 next_line = all_lines[i + 1].strip()
                 if len(next_line) < 30 and next_line and next_line[0].isupper():
                     if _is_valid_numbered_header(potential_num, next_line, expected_number):
-                        detected_header = True
+                        detected_header = True;
                         is_numbered = True
-                        num_str = potential_num
+                        num_str = potential_num;
                         phrase = next_line
                         i += 1
 
         if not detected_header:
             mapped_title = _get_mapped_title(line)
             if mapped_title:
-                detected_header = True
-                is_numbered = False
+                detected_header = True;
+                is_numbered = False;
                 phrase = mapped_title
 
         if detected_header:
-            if current_section["content"].strip():
-                sections.append(current_section)
+            if current_section["content"].strip(): sections.append(current_section)
             if is_numbered:
                 current_section = {"title": f"{num_str}. {phrase}", "content": ""}
                 expected_number += 1
@@ -209,19 +166,16 @@ def extract_sections_visual(uploaded_file):
         else:
             current_section["content"] += line + " "
         i += 1
-
-    if current_section["content"].strip():
-        sections.append(current_section)
+    if current_section["content"].strip(): sections.append(current_section)
     return sections
 
 
 # ==============================================================================
-# 5. FIRST PASS EVALUATION (Uses prompts.py)
+# 4. REVIEW LOGIC (USING PROMPTS.PY)
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
-    # Fetch prompt from external file
+    # Retrieve prompt from prompts.py
     prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
-
     try:
         response = client.chat.completions.create(
             model="gpt-5",
@@ -232,32 +186,26 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
         return f"Error: {str(e)}"
 
 
-# ==============================================================================
-# 6. SECTION REVIEW (Uses prompts.py)
-# ==============================================================================
 def generate_section_review(client, section_name, section_text, paper_title):
     clean_name = section_name.upper().strip()
     clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
-
     if clean_name in SKIP_REVIEW_SECTIONS or section_name.upper() in SKIP_REVIEW_SECTIONS:
         return None
 
-    # Define Section Focus
     section_focus = ""
     if "METHOD" in clean_name:
-        section_focus = "Focus on: Reproducibility, mathematical soundness, and clarity of the algorithm steps."
+        section_focus = "Focus on: Reproducibility, mathematical soundness."
     elif "RESULT" in clean_name:
-        section_focus = "Focus on: Fairness of baselines, statistical significance, and whether claims match the data."
+        section_focus = "Focus on: Fairness, statistical significance."
     elif "INTRO" in clean_name:
-        section_focus = "Focus on: Clarity of the research gap and explicit contribution statement."
+        section_focus = "Focus on: Clarity of research gap."
     elif "RELATED" in clean_name:
-        section_focus = "Focus on: Coverage of recent state-of-the-art works (post-2020)."
+        section_focus = "Focus on: Coverage of recent works."
     elif "CONCLUSION" in clean_name:
-        section_focus = "Focus on: Whether the conclusion is supported by the experiments presented."
+        section_focus = "Focus on: Whether conclusion is supported."
 
-    # Fetch prompt from external file
+    # Retrieve prompt from prompts.py
     prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
-
     try:
         response = client.chat.completions.create(
             model="gpt-5",
@@ -269,88 +217,74 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION (CRASH FIX & SIMPLIFIED)
+# 5. PDF GENERATION (CRASH PROOF)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    # 1. Sanitize text
+    # 1. Clean basic things (like markdown bolding)
     full_text_processed = sanitize_text_for_pdf(full_report_text)
 
     pdf = FPDF()
 
-    # --- FONT LOADING (BEFORE Adding Page) ---
+    # --- FONT LOADING LOGIC ---
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    font_path = os.path.join(base_dir, "dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
-    font_family = "Arial"  # Default
 
-    if os.path.exists(font_path):
-        try:
-            # uni=True is crucial for Greek/Symbols
-            pdf.add_font('DejaVu', '', font_path, uni=True)
+    # Path 1: Inside the subfolder structure (as you described)
+    font_path_1 = os.path.join(base_dir, "dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
+    # Path 2: Directly in the main folder (as a backup)
+    font_path_2 = os.path.join(base_dir, "DejaVuSans.ttf")
+
+    font_family = "Arial"  # Fallback default
+    unicode_font_loaded = False
+
+    # Attempt to load the Unicode font
+    try:
+        if os.path.exists(font_path_1):
+            pdf.add_font('DejaVu', '', font_path_1, uni=True)
             font_family = 'DejaVu'
-            print(f"LOG: Loaded font from {font_path}")
-        except Exception as e:
-            print(f"Warning: Failed to load DejaVu font: {e}")
-    else:
-        # Fallback check in current directory
-        if os.path.exists("DejaVuSans.ttf"):
-            pdf.add_font('DejaVu', '', "DejaVuSans.ttf", uni=True)
+            unicode_font_loaded = True
+        elif os.path.exists(font_path_2):
+            pdf.add_font('DejaVu', '', font_path_2, uni=True)
             font_family = 'DejaVu'
+            unicode_font_loaded = True
         else:
-            print(f"CRITICAL WARNING: Font not found at {font_path}")
+            print("Warning: DejaVuSans.ttf not found. Falling back to Arial (Greek letters will be removed).")
+    except Exception as e:
+        print(f"Font loading error: {e}. Falling back to Arial.")
 
-    # --- ADD PAGE (Must happen AFTER add_font for safety) ---
+    # Add Page must happen AFTER font is registered
     pdf.add_page()
 
-    # --- HEADER ---
+    # Header
     pdf.set_font(font_family, '', 16)
     pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(2)
-
-    pdf.set_text_color(100, 100, 100)
-    pdf.set_font(font_family, '', 8)
-    pdf.multi_cell(0, 4, "DISCLAIMER: Automated tool. Verify manually.", align='C')
-    pdf.ln(8)
-
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font(font_family, '', 14)
-    pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
-    pdf.ln(2)
-
-    # --- BODY ---
     pdf.set_font(font_family, '', 11)
 
+    # --- BODY TEXT WRITING ---
     lines = full_text_processed.split('\n')
     for line in lines:
         clean = line.strip()
 
-        # Safety Check: If we are using Arial, we MUST strip Unicode or it crashes.
-        if font_family == 'Arial':
-            clean = clean.encode('latin-1', 'replace').decode('latin-1')
+        # CRITICAL FIX: If we are using Arial (because DejaVu failed), we MUST
+        # remove any Greek/Unicode chars, or FPDF will crash/error out.
+        if not unicode_font_loaded:
+            try:
+                # This replaces characters like 'α' with '?' or similar safe ASCII
+                clean = clean.encode('latin-1', 'replace').decode('latin-1')
+            except:
+                clean = "[Text removed due to encoding error]"
 
-        # Formatting
-        if "DECISION: REJECT" in clean:
-            pdf.set_text_color(200, 0, 0)
-            pdf.cell(0, 10, txt=clean, ln=True)
-            pdf.set_text_color(0, 0, 0)
-        elif "DECISION: PROCEED" in clean:
-            pdf.set_text_color(0, 150, 0)
-            pdf.cell(0, 10, txt=clean, ln=True)
-            pdf.set_text_color(0, 0, 0)
-        elif "--- SECTION:" in clean or "SECTION TITLE:" in clean:
+        # Write to PDF
+        if "DECISION:" in clean or "--- SECTION:" in clean:
             pdf.ln(5)
             pdf.cell(0, 10, txt=clean, ln=True)
         else:
             pdf.multi_cell(0, 5, clean)
 
-    # --- RETURN BYTES ---
-    # We remove the try/except block that returned the fake PDF.
-    # We rely on standard FPDF string-to-latin1 conversion.
-    return pdf.output(dest="S").encode("latin-1")
+    # Output the bytes safely
+    return pdf.output(dest="S").encode("latin-1", "replace")
 
 
-# ==============================================================================
-# 8. CSV BATCH GENERATOR
-# ==============================================================================
 def create_batch_csv(paper_results_list):
     output = io.StringIO()
     writer = csv.writer(output)
