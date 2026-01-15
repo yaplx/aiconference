@@ -5,7 +5,7 @@ import io
 import os
 from openai import OpenAI
 from fpdf import FPDF
-import prompts  # <--- IMPORT THE NEW FILE
+import prompts  # <--- IMPORT THE NEW PROMPTS FILE
 
 # ==============================================================================
 # 1. CONFIGURATION & CONSTANTS
@@ -269,50 +269,49 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 7. PDF GENERATION (CRASH FIX)
+# 7. PDF GENERATION (CRASH FIX & SIMPLIFIED)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    # 1. Sanitize text (fix dashes/quotes/bolding)
+    # 1. Sanitize text
     full_text_processed = sanitize_text_for_pdf(full_report_text)
 
     pdf = FPDF()
-    pdf.add_page()
 
-    # --- FONT PATH LOGIC ---
+    # --- FONT LOADING (BEFORE Adding Page) ---
     base_dir = os.path.dirname(os.path.abspath(__file__))
     font_path = os.path.join(base_dir, "dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
+    font_family = "Arial"  # Default
 
-    font_family = "Arial"  # Default fallback
-
-    # Try loading Unicode font
     if os.path.exists(font_path):
         try:
+            # uni=True is crucial for Greek/Symbols
             pdf.add_font('DejaVu', '', font_path, uni=True)
             font_family = 'DejaVu'
             print(f"LOG: Loaded font from {font_path}")
         except Exception as e:
             print(f"Warning: Failed to load DejaVu font: {e}")
-            font_family = "Arial"
     else:
-        # Check current folder as backup
+        # Fallback check in current directory
         if os.path.exists("DejaVuSans.ttf"):
             pdf.add_font('DejaVu', '', "DejaVuSans.ttf", uni=True)
             font_family = 'DejaVu'
         else:
-            print(f"CRITICAL WARNING: Font not found at {font_path}. Greek letters will fail.")
-            font_family = "Arial"
+            print(f"CRITICAL WARNING: Font not found at {font_path}")
+
+    # --- ADD PAGE (Must happen AFTER add_font for safety) ---
+    pdf.add_page()
 
     # --- HEADER ---
     pdf.set_font(font_family, '', 16)
     pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
     pdf.ln(2)
 
-    pdf.set_text_color(100, 100, 100)  # Gray
+    pdf.set_text_color(100, 100, 100)
     pdf.set_font(font_family, '', 8)
     pdf.multi_cell(0, 4, "DISCLAIMER: Automated tool. Verify manually.", align='C')
     pdf.ln(8)
 
-    pdf.set_text_color(0, 0, 0)  # Black
+    pdf.set_text_color(0, 0, 0)
     pdf.set_font(font_family, '', 14)
     pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
     pdf.ln(2)
@@ -324,16 +323,11 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     for line in lines:
         clean = line.strip()
 
-        # Safe Decoding Logic:
-        # If font is Arial (fallback), we MUST strip special chars or it crashes
+        # Safety Check: If we are using Arial, we MUST strip Unicode or it crashes.
         if font_family == 'Arial':
-            try:
-                # Replace unprintable chars to prevent "PDF cannot be opened" error
-                clean = clean.encode('latin-1', 'replace').decode('latin-1')
-            except:
-                clean = "Error: Text contained unsupported characters."
+            clean = clean.encode('latin-1', 'replace').decode('latin-1')
 
-        # Formatting decisions
+        # Formatting
         if "DECISION: REJECT" in clean:
             pdf.set_text_color(200, 0, 0)
             pdf.cell(0, 10, txt=clean, ln=True)
@@ -348,15 +342,10 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
         else:
             pdf.multi_cell(0, 5, clean)
 
-    # --- OUTPUT GENERATION ---
-    try:
-        # 'S' returns the string/bytes. We encode to latin-1 for FPDF compatibility
-        # using 'replace' to ensure we never send a corrupt file.
-        return pdf.output(dest="S").encode("latin-1", "replace")
-    except Exception as e:
-        print(f"PDF Output Error: {e}")
-        # Return a safe error PDF byte string if all else fails
-        return b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/Resources <<\n/Font <<\n/F1 4 0 R\n>>\n>>\n/MediaBox [0 0 612 792]\n/Contents 5 0 R\n>>\nendobj\n4 0 obj\n<<\n/Type /Font\n/Subtype /Type1\n/Name /F1\n/BaseFont /Helvetica\n>>\nendobj\n5 0 obj\n<<\n/Length 44\n>>\nstream\nBT\n/F1 24 Tf\n100 700 Td\n(Error Generating Report) Tj\nET\nendstream\nendobj\nxref\n0 6\n0000000000 65535 f\n0000000010 00000 n\n0000000060 00000 n\n0000000157 00000 n\n0000000307 00000 n\n0000000395 00000 n\ntrailer\n<<\n/Size 6\n/Root 1 0 R\n>>\nstartxref\n490\n%%EOF"
+    # --- RETURN BYTES ---
+    # We remove the try/except block that returned the fake PDF.
+    # We rely on standard FPDF string-to-latin1 conversion.
+    return pdf.output(dest="S").encode("latin-1")
 
 
 # ==============================================================================
