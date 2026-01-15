@@ -169,11 +169,12 @@ def extract_sections_visual(uploaded_file):
 
 
 # ==============================================================================
-# 4. REVIEW LOGIC (GPT-5 ONLY - NO FALLBACK)
+# 4. REVIEW LOGIC (GPT-5 & PROMPTS)
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
-    # Load prompt from prompts.py
+    # Load prompt from external file
     prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
+
     try:
         response = client.chat.completions.create(
             model="gpt-5",
@@ -202,8 +203,9 @@ def generate_section_review(client, section_name, section_text, paper_title):
     elif "CONCLUSION" in clean_name:
         section_focus = "Focus on: Whether conclusion is supported."
 
-    # Load prompt from prompts.py
+    # Load prompt from external file
     prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
+
     try:
         response = client.chat.completions.create(
             model="gpt-5",
@@ -215,72 +217,79 @@ def generate_section_review(client, section_name, section_text, paper_title):
 
 
 # ==============================================================================
-# 5. PDF GENERATION (SIMPLE & CLEAN)
+# 5. PDF GENERATION (SIMPLE ARIAL - CRASH PROOF)
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
-    pdf = FPDF()
-    pdf.add_page()
+    """
+    Generates a PDF using standard Arial.
+    Enforces Latin-1 encoding to prevent crashes from Greek/Special chars.
+    """
+    try:
+        # 1. Sanitize text
+        full_text_processed = sanitize_text_for_pdf(full_report_text)
 
-    # --- FONT LOADING (SIMPLE) ---
-    # Path: dejavu-sans-ttf-2.37/ttf/DejaVuSans.ttf
-    font_path = os.path.join("dejavu-sans-ttf-2.37", "ttf", "DejaVuSans.ttf")
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", '', 11)
 
-    font_family = "Arial"
-    unicode_font_loaded = False
+        # --- HEADER ---
+        pdf.set_font("Arial", '', 16)
+        pdf.cell(0, 10, txt="AI-Optimized Reviewer Assistant Report", ln=True, align='C')
+        pdf.ln(3)
 
-    if os.path.exists(font_path):
+        # --- DISCLAIMER ---
+        pdf.set_font("Arial", '', 8)
+        pdf.set_text_color(100, 100, 100)
+
+        disclaimer_text = (
+            "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
+            "suggestion based on structural and content analysis."
+        )
+        pdf.multi_cell(0, 4, txt=disclaimer_text, align='C')
+        pdf.ln(10)
+
+        # --- METADATA ---
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Arial", '', 14)
+        pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
+        pdf.ln(2)
+
+        # --- BODY ---
+        pdf.set_font("Arial", '', 12)
+
+        lines = full_text_processed.split('\n')
+        for line in lines:
+            clean = line.strip()
+
+            # CRITICAL: Force Latin-1. Replace unknown chars with '?'
+            clean = clean.encode('latin-1', 'replace').decode('latin-1')
+
+            if "DECISION: REJECT" in clean:
+                pdf.set_text_color(200, 0, 0)
+                pdf.cell(0, 10, txt=clean, ln=True)
+                pdf.set_text_color(0, 0, 0)
+            elif "DECISION: PROCEED" in clean:
+                pdf.set_text_color(0, 150, 0)
+                pdf.cell(0, 10, txt=clean, ln=True)
+                pdf.set_text_color(0, 0, 0)
+            elif "--- SECTION:" in clean or "SECTION TITLE:" in clean:
+                pdf.ln(5)
+                pdf.cell(0, 10, txt=clean, ln=True)
+            else:
+                pdf.multi_cell(0, 5, clean)
+
+        return pdf.output(dest="S").encode("latin-1")
+
+    except Exception as e:
+        # Fallback to simple text PDF if something totally unexpected happens
         try:
-            pdf.add_font('DejaVu', '', font_path, uni=True)
-            font_family = 'DejaVu'
-            unicode_font_loaded = True
+            rescue = FPDF()
+            rescue.add_page()
+            rescue.set_font("Arial", "", 12)
+            rescue.multi_cell(0, 5, f"Critical PDF Error: {str(e)}\n\nRaw Content:\n{full_report_text}")
+            return rescue.output(dest="S").encode("latin-1", 'replace')
         except:
-            pass  # Fallback to Arial
-
-    # --- TITLE ---
-    pdf.set_font(font_family, '', 16)
-    pdf.cell(0, 10, txt="AI Paper Improvement Report", ln=True, align='C')
-    pdf.ln(3)
-
-    # --- DISCLAIMER ---
-    pdf.set_font(font_family, '', 8)
-    pdf.set_text_color(100, 100, 100)
-
-    disclaimer_text = (
-        "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
-        "suggestion based on structural and content analysis."
-    )
-    pdf.multi_cell(0, 4, txt=disclaimer_text, align='C')
-    pdf.ln(10)
-
-    # --- METADATA ---
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font(font_family, '', 14)
-    pdf.cell(0, 10, txt=f"REPORT FOR: {filename}", ln=True, align='L')
-    pdf.ln(2)
-
-    # --- BODY ---
-    pdf.set_font(font_family, '', 12)
-
-    # Sanitize text (Markdown removal etc)
-    clean_text = sanitize_text_for_pdf(full_report_text)
-
-    lines = clean_text.split('\n')
-    for line in lines:
-        safe_line = line.strip()
-
-        # If not using DejaVu (Unicode), strip special chars to prevent crash
-        if not unicode_font_loaded:
-            safe_line = safe_line.encode('latin-1', 'replace').decode('latin-1')
-
-        if "DECISION:" in safe_line or "--- SECTION:" in safe_line:
-            pdf.ln(5)
-            pdf.cell(0, 10, txt=safe_line, ln=True)
-        else:
-            pdf.multi_cell(0, 5, safe_line)
-
-    # Return valid PDF bytes
-    # We use 'replace' here to ensure the browser always gets a valid file structure
-    return pdf.output(dest="S").encode("latin-1", "replace")
+            return b"Error: Could not generate PDF."
 
 
 # ==============================================================================
