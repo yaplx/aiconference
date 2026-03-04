@@ -34,9 +34,10 @@ def get_section_review_prompt(paper_title, section_name, section_focus, section_
         Paper: "{paper_title}"
         Section: "{section_name}"
 
-        Task: Identify critical issues that require manual verification by a human expert. {section_focus}
-        You are allowed to approve the section if there is no major issue. By default, all diagrams will be checked manually.
-
+        Task: 
+        Identify critical issues in the provided text that require manual verification by a human expert. Base your review strictly on {section_focus}. 
+        Assume all diagrams and figures will be checked manually. If there are no major issues, you must approve the section.
+        
         **STRICT RULES:**
         1. **NO MODIFICATION:** Do NOT attempt to rewrite, fix, or modify the data/text. Only review it.
         2. **NEUTRALITY:** Be objective. Do not praise. Only raise verification points. It is ok to skip if there is none.
@@ -51,10 +52,27 @@ def get_section_review_prompt(paper_title, section_name, section_focus, section_
         FLAGGED ISSUES:
         - [Point 1]
         - [Point 2]
-        - [Point 3]
-        - [Point 4]
-        (Leave empty if ACCEPT)
+
+        (Leave "FLAGGED ISSUES: None" if ACCEPT)
 
         Section Content:
         {section_text[:15000]}
         """
+
+
+def get_section_focus(clean_name):
+    """
+    Determines the specific review focus based on the section name.
+    """
+    if "METHOD" in clean_name:
+        return "Focus on: Reproducibility, mathematical soundness."
+    elif "RESULT" in clean_name:
+        return "Focus on: Fairness, statistical significance."
+    elif "INTRO" in clean_name:
+        return "Focus on: Clarity of the research gap."
+    elif "RELATED" in clean_name:
+        return "Focus on: Coverage of recent state-of-the-art works."
+    elif "CONCLUSION" in clean_name:
+        return "Focus on: Whether the conclusion is supported by the experiments presented."
+
+    return ""  # Default empty string if no specific focus is needed

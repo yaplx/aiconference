@@ -2,22 +2,14 @@ import fitz  # PyMuPDF
 import re
 import csv
 import io
-import os
 from openai import OpenAI
 from fpdf import FPDF
-import prompts  # Imports your local prompts.py file
+import prompts
+import headers_map as hm
 
 # ==============================================================================
 # 1. CONFIGURATION
 # ==============================================================================
-HEADER_MAP = {
-    "ABSTRACT": "ABSTRACT", "INTRODUCTION": "INTRODUCTION",
-    "RELATED WORK": "RELATED WORK", "LITERATURE REVIEW": "RELATED WORK",
-    "BACKGROUND": "RELATED WORK", "REFERENCES": "REFERENCES",
-    "BIBLIOGRAPHY": "REFERENCES", "ACKNOWLEDGMENT": "ACKNOWLEDGMENT",
-    "ACKNOWLEDGEMENTS": "ACKNOWLEDGMENT", "APPENDIX": "APPENDIX",
-    "APPENDICES": "APPENDIX", "DECLARATION": "DECLARATION"
-}
 SKIP_REVIEW_SECTIONS = [
     "ABSTRACT", "PREAMBLE", "PREAMBLE/INTRODUCTION", "REFERENCES",
     "BIBLIOGRAPHY", "ACKNOWLEDGMENT", "APPENDIX", "DECLARATION"
@@ -78,7 +70,7 @@ def _is_valid_numbered_header(num_str, phrase, expected_number):
 
 def _get_mapped_title(text):
     clean_upper = text.upper().strip().replace(":", "")
-    if clean_upper in HEADER_MAP: return HEADER_MAP[clean_upper]
+    if clean_upper in hm.HEADER_MAP: return hm.HEADER_MAP[clean_upper]
     return None
 
 
@@ -249,7 +241,7 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     # --- BODY ---
     pdf.set_font("Arial", '', 12)
 
-    # Sanitize text (Markdown removal etc)
+    # Sanitize text (Markdown removal etc.)
     clean_text = sanitize_text_for_pdf(full_report_text)
 
     lines = clean_text.split('\n')
