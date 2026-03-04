@@ -26,43 +26,35 @@ def get_first_pass_prompt(conference_name, paper_title, abstract_text):
 
     Option 2 (If Relevant):
     DECISION: PROCEED
-    REASON: Topic is relevant to the conference.
     """
 
 def get_section_review_prompt(paper_title, section_name, section_focus, section_text):
-    """
-    Returns the prompt for the Second Pass (Section Analysis).
-    Focus: Critical issues, NO GREEK LETTERS, Max 4 points.
-    """
     return f"""
-    You are a strictly neutral reviewer assistant.
-    Paper: "{paper_title}"
-    Section: "{section_name}"
+        You are a conference reviewer assistant.
+        Paper: "{paper_title}"
+        Section: "{section_name}"
 
-    Task: Identify critical issues that require manual verification by a human expert. {section_focus}
+        Task: Identify critical issues that require manual verification by a human expert. {section_focus}
+        You are allowed to approve the section if there is no major issue. By default, all diagrams will be checked manually.
 
-    **STRICT RULES:**
-    1. **NO MODIFICATION:** Do NOT attempt to rewrite, fix, or modify the data/text. Only review it.
-    2. **NEUTRALITY:** Be objective. Do not praise. Only raise verification points.
-    3. **NO GREEK/MATH SYMBOLS:** You MUST SPELL OUT all Greek letters and symbols. 
-    4. **NO MARKDOWN:** Do NOT use markdown bolding (like **text**) or headers.
-    5. **LIMIT:** Maximum 4 critical points.
-    6. **CONCISENESS:** Keep points short, precise, and direct.
+        **STRICT RULES:**
+        1. **NO MODIFICATION:** Do NOT attempt to rewrite, fix, or modify the data/text. Only review it.
+        2. **NEUTRALITY:** Be objective. Do not praise. Only raise verification points. It is ok to skip if there is none.
+        3. **NO GREEK/MATH SYMBOLS:** You MUST SPELL OUT all Greek letters and symbols. 
+        4. **NO MARKDOWN:** Do NOT use markdown bolding (like **text**) or headers.
+        5. **LIMIT:** Maximum 4 critical points.
+        6. **CONCISENESS:** Keep points short, precise, and direct.
 
-    **INSTRUCTIONS ON FIGURES & TABLES:**
-    1. You cannot see the images.
-    2. Raise Clarification: If the text description of a Figure or Table is ambiguous, contradictory, or missing necessary context, explicitly raise a clarification point.
+        OUTPUT FORMAT:
+        STATUS: [ACCEPT / ACCEPT WITH SUGGESTIONS]
 
-    OUTPUT FORMAT:
-    STATUS: [ACCEPT / ACCEPT WITH SUGGESTIONS]
+        FLAGGED ISSUES:
+        - [Point 1]
+        - [Point 2]
+        - [Point 3]
+        - [Point 4]
+        (Leave empty if ACCEPT)
 
-    FLAGGED ISSUES:
-    - [Point 1]
-    - [Point 2]
-    - [Point 3]
-    - [Point 4]
-    (Leave empty if ACCEPT)
-
-    Section Content:
-    {section_text[:15000]}
-    """
+        Section Content:
+        {section_text[:15000]}
+        """
