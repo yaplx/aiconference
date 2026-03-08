@@ -4,6 +4,7 @@ import zipfile
 import io
 import backend
 from dotenv import load_dotenv
+from conference_options import CONFERENCE_OPTIONS  # Imported the new file
 
 # ==========================================
 # 1. PAGE CONFIG & AUTHENTICATION
@@ -67,21 +68,10 @@ def create_zip_of_reports(results_list):
 st.title("⚖️ AI Conference Reviewer")
 
 target_conference = "General Academic Standards"
-conference_options = [
-    "General Quality Check",
-    "Learning Sciences, Educational Neuroscience, and CSCL",
-    "Mobile, Ubiquitous & Contextual Learning",
-    "Joyful Learning, Educational Games, and Digital Toys",
-    "Technology Applications in Higher Education",
-    "Technology-enhanced Language and Humanities Learning",
-    "AI in Education Applications and Practices",
-    "Learning Analytics and Assessment",
-    "STEM and Maker Education",
-    "Educational Technology: Innovations & Policies",
-    "Custom..."
-]
 
-selected_option = st.selectbox("Target Conference Track", conference_options, disabled=st.session_state.processing)
+# Replaced the hardcoded list with the imported CONFERENCE_OPTIONS
+selected_option = st.selectbox("Target Conference Track", CONFERENCE_OPTIONS, disabled=st.session_state.processing)
+
 if selected_option == "Custom...":
     user_custom = st.text_input("Enter Conference Name:", disabled=st.session_state.processing)
     if user_custom.strip(): target_conference = user_custom
