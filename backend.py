@@ -176,26 +176,19 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
         return f"Error with gpt-5: {str(e)}"
 
 
-def generate_section_review(client, section_name, section_text, paper_title):
+# ---> UPDATED THIS FUNCTION TO ACCEPT 'conference_name' <---
+def generate_section_review(client, section_name, section_text, paper_title, conference_name):
     clean_name = section_name.upper().strip()
     clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
     if clean_name in SKIP_REVIEW_SECTIONS or section_name.upper() in SKIP_REVIEW_SECTIONS:
         return None
 
-    section_focus = ""
-    if "METHOD" in clean_name:
-        section_focus = "Focus on: Reproducibility, mathematical soundness."
-    elif "RESULT" in clean_name:
-        section_focus = "Focus on: Fairness, statistical significance."
-    elif "INTRO" in clean_name:
-        section_focus = "Focus on: Clarity of research gap."
-    elif "RELATED" in clean_name:
-        section_focus = "Focus on: Coverage of recent works."
-    elif "CONCLUSION" in clean_name:
-        section_focus = "Focus on: Whether conclusion is supported."
+    # Fetch the specific focus instruction from prompts.py
+    section_focus = prompts.get_section_focus(clean_name)
 
-    # Load prompt from prompts.py
-    prompt = prompts.get_section_review_prompt(paper_title, section_name, section_focus, section_text)
+    # ---> UPDATED TO PASS 'conference_name' <---
+    prompt = prompts.get_section_review_prompt(conference_name, paper_title, section_name, section_focus, section_text)
+
     try:
         response = client.chat.completions.create(
             model="gpt-5",
