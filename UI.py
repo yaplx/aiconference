@@ -1,17 +1,15 @@
 import streamlit as st
 import os
-import zipfile
-import io
 import backend
 import re
-import headers_map as hm  # Imported the new map
+import headers_map as hm
 from dotenv import load_dotenv
 from conference_options import CONFERENCE_OPTIONS
 
 # ==========================================
 # 1. PAGE CONFIG & AUTHENTICATION
 # ==========================================
-st.set_page_config(page_title="Conference Desk Reviewer", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="AI Conference Assistant", page_icon="⚖️", layout="wide")
 load_dotenv()
 
 if "processing" not in st.session_state: st.session_state.processing = False
@@ -19,282 +17,120 @@ if "results" not in st.session_state: st.session_state.results = None
 
 
 def check_password():
-    if "APP_PASSWORD" in st.secrets:
-        secret_password = st.secrets["APP_PASSWORD"]
-    elif os.getenv("APP_PASSWORD"):
-        secret_password = os.getenv("APP_PASSWORD")
-    else:
-        return True
-
+    secret_password = st.secrets.get("APP_PASSWORD") or os.getenv("APP_PASSWORD")
+    if not secret_password: return True
     user_input = st.text_input("🔑 Enter Access Password", type="password")
-    if user_input == secret_password:
-        return True
-    return False
+    return user_input == secret_password
 
 
 if not check_password():
     st.stop()
 
-api_key = None
-if "OPENAI_API_KEY" in st.secrets:
-    api_key = st.secrets["OPENAI_API_KEY"]
-elif os.getenv("OPENAI_API_KEY"):
-    api_key = os.getenv("OPENAI_API_KEY")
-
+api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 if not api_key:
-    st.error("🚨 API Key not found! Please configure secrets or .env")
+    st.error("Missing OpenAI API Key.")
     st.stop()
 
-client = backend.get_openai_client(api_key)
+# ==========================================
+# 2. SIDEBAR CONFIGURATION
+# ==========================================
+with st.sidebar:
+    st.title("⚙️ Settings")
+    audience = st.radio("Target Audience", ["Reviewer", "Author"], help="Changes the tone and disclaimer.")
+    conf_choice = st.selectbox("Conference/Track", CONFERENCE_OPTIONS)
 
+    st.divider()
+    st.subheader("📁 Batch Upload")
+    uploaded_files = st.file_uploader("Upload PDF Manuscripts", type="pdf", accept_multiple_files=True)
+
+    process_btn = st.button("🚀 Start Desk Review", type="primary", use_container_width=True,
+                            disabled=not uploaded_files)
 
 # ==========================================
-# 2. HELPER FUNCTIONS
+# 3. CORE PROCESSING LOGIC
 # ==========================================
-def create_zip_of_reports(results_list):
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for item in results_list:
-            audience_str = item.get('audience', 'Reviewer').title()
-            pdf_name = f"Report_{audience_str}_{item['filename']}.pdf"
-            zip_file.writestr(pdf_name, item['pdf_bytes'])
+if process_btn and uploaded_files:
+    st.session_state.processing = True
+    st.session_state.results = []
 
-        if results_list and results_list[0].get('decision') != "N/A":
-            csv_data = backend.create_batch_csv(results_list)
-            zip_file.writestr("Batch_Summary.csv", csv_data)
-    return zip_buffer.getvalue()
+    client = backend.get_openai_client(api_key)
 
+    for uploaded_file in uploaded_files:
+        with st.status(f"Processing: {uploaded_file.name}...", expanded=True) as status:
+            # 1. Extraction (via document_reader)
+            sections = backend.extract_sections(uploaded_file)
 
-# ==========================================
-# 3. MAIN INTERFACE
-# ==========================================
-st.title("⚖️ AI Conference Reviewer")
+            # 2. Extract Title & Abstract for First Pass
+            paper_title = sections[0]['content'][:200].strip() if sections else "Unknown Title"
+            abstract_content = next((s['content'] for s in sections if "ABSTRACT" in s['title'].upper()),
+                                    "Abstract not found.")
 
-c1, c2 = st.columns(2)
-with c1:
-    target_conference = "General Academic Standards"
-    selected_option = st.selectbox("Target Conference Track", CONFERENCE_OPTIONS, disabled=st.session_state.processing)
+            # 3. First Pass Assessment
+            st.write("🔍 Performing First Pass...")
+            first_pass_report = backend.evaluate_first_pass(client, paper_title, abstract_content, conf_choice,
+                                                            audience.lower())
 
-    if selected_option == "Custom...":
-        user_custom = st.text_input("Enter Conference Name:", disabled=st.session_state.processing)
-        if user_custom.strip(): target_conference = user_custom
-    elif selected_option != "General Quality Check":
-        target_conference = selected_option
+            # 4. Filter Sections for Detailed Review (Skip Front/Back Matter)
+            reviewable_sections = []
+            for s in sections:
+                clean_t = re.sub(r"^[\d\w]+\.\s*", "", s['title'].upper().strip())
+                mapped = hm.HEADER_MAP.get(clean_t, clean_t)
+                if mapped not in hm.FRONT_MATTER and mapped not in hm.BACK_MATTER:
+                    reviewable_sections.append(s)
 
-with c2:
-    audience_selection = st.radio(
-        "Generate Report For:",
-        ["Internal Review Committee (Flags flaws)", "Paper Authors (Constructive feedback)"],
-        disabled=st.session_state.processing
-    )
-    audience = "author" if "Authors" in audience_selection else "reviewer"
+            # 5. Detailed Batch Review
+            st.write("🧠 Generating Detailed Feedback...")
+            batch_feedback = backend.generate_batch_review(client, reviewable_sections, paper_title, conf_choice,
+                                                           audience.lower())
 
-uploaded_files = st.file_uploader("Upload PDF(s)", type="pdf", accept_multiple_files=True,
-                                  disabled=st.session_state.processing)
-show_details = st.checkbox("Show details on screen (Enable Tabs)", value=True, disabled=st.session_state.processing)
+            # 6. Assemble Full Report Text
+            full_report = f"TITLE: {paper_title}\n\nFIRST PASS ASSESSMENT:\n{first_pass_report}\n\n"
+            for s in reviewable_sections:
+                full_report += f"--- SECTION: {s['title']} ---\n{batch_feedback.get(s['title'], 'No feedback.')}\n\n"
 
-if uploaded_files and not st.session_state.processing:
-    if st.button("🚀 Start AI Review"):
-        st.session_state.processing = True
-        st.session_state.results = []
-        st.rerun()
+            # 7. Generate PDF
+            pdf_bytes = backend.create_pdf(full_report, uploaded_file.name, audience.lower())
 
-# ==========================================
-# 4. PROCESSING LOGIC
-# ==========================================
-if st.session_state.processing and uploaded_files:
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    temp_results = []
-
-    for i, uploaded_file in enumerate(uploaded_files):
-        status_text.text(f"Processing file {i + 1}/{len(uploaded_files)}: {uploaded_file.name}...")
-        try:
-            file_container = st.expander(f"📄 Processing: {uploaded_file.name}",
-                                         expanded=True) if show_details else st.empty()
-
-            saved_tabs_data = []
-            first_pass_content = ""
-            report_log = ""
-            decision = "Pending"
-            notes = ""
-
-            with file_container:
-                uploaded_file.seek(0)
-                sections = backend.extract_sections_visual(uploaded_file)
-                full_text_clean = backend.combine_section_content(sections)
-
-                valid_sections = []
-                for s in sections:
-                    # Clean the title to match our map (remove "1. ", etc.)
-                    clean_title = s['title'].upper().strip()
-                    clean_title = re.sub(r"^[\d\w]+\.\s*", "", clean_title)
-
-                    # Look up what this section is "mapped" to
-                    mapped = hm.HEADER_MAP.get(clean_title, clean_title)
-
-                    # RULE: Only allow if it's NOT in Front Matter or Back Matter
-                    if mapped not in hm.FRONT_MATTER and mapped not in hm.BACK_MATTER:
-                        valid_sections.append(s)
-
-                # Now tab_names will ONLY contain First Pass + Main Body Sections
-                tab_names = ["🔍 First Pass"] + [s['title'] for s in valid_sections]
-
-                if show_details:
-                    tabs = st.tabs(tab_names)
-                    first_pass_tab = tabs[0]
-                    section_tabs = tabs[1:]
-                else:
-                    first_pass_tab = st.empty()
-                    section_tabs = []
-
-                # First Pass
-                with first_pass_tab:
-                    st.info(f"Analyzing Abstract (Mode: {audience.title()})...")
-                    first_pass_content = backend.evaluate_first_pass(
-                        client, uploaded_file.name, full_text_clean[:4000], target_conference, audience
-                    )
-                    st.markdown(first_pass_content)
-
-                # SLUG EXTRACTION
-                generated_slug = uploaded_file.name.replace(".pdf", "")[:20].replace(" ", "_")
-                for line in first_pass_content.split('\n'):
-                    if line.strip().startswith("SLUG:"):
-                        raw_slug = line.split("SLUG:")[1].strip()
-                        generated_slug = re.sub(r'[^A-Za-z0-9_-]', '', raw_slug.replace(' ', '_'))
-                        break
-
-                report_log = f"\n\n--- FIRST PASS ---\n{first_pass_content}\n\n"
-                decision = "PROCEED"
-                notes = "Standard review."
-
-                if "REJECT" in first_pass_content:
-                    decision = "REJECT"
-                    report_log += "**Skipping detailed section review due to rejection.**"
-                    if "REASON:" in first_pass_content:
-                        try:
-                            notes = first_pass_content.split("REASON:")[1].strip()
-                        except:
-                            notes = "Rejected"
-                    if show_details: st.error("❌ Rejected.")
-                else:
-                    # Second Pass - BATCH PROCESSING
-                    report_log += "--- SECTION ANALYSIS ---\n"
-                    flagged_items = []
-
-                    # Dynamically sort into Pods using headers_map
-                    pod1 = []
-                    pod2 = []
-
-                    for sec in valid_sections:
-                        clean_title = sec['title'].upper().strip()
-                        clean_title = re.sub(r"^[\d\w]+\.\s*", "", clean_title)
-                        mapped = hm.HEADER_MAP.get(clean_title, clean_title)
-
-                        if mapped in hm.POD_1:
-                            pod1.append(sec)
-                        else:
-                            pod2.append(sec)
-
-                    pods = [p for p in [pod1, pod2] if p]
-
-                    for pod in pods:
-                        pod_titles = ", ".join([s['title'] for s in pod])
-
-                        with st.spinner(f"Reviewing in batch context: {pod_titles}..."):
-                            batch_feedbacks = backend.generate_batch_review(
-                                client, pod, uploaded_file.name, target_conference, audience
-                            )
-
-                        for sec in pod:
-                            feedback = batch_feedbacks.get(sec['title'], "Review failed or no output generated.")
-
-                            tab_idx = valid_sections.index(sec)
-                            current_tab = section_tabs[tab_idx] if show_details else st.empty()
-                            with current_tab:
-                                st.markdown(feedback)
-
-                            report_log += f"\n--- SECTION: {sec['title']} ---\n{feedback}\n"
-                            saved_tabs_data.append({"title": sec['title'], "content": feedback})
-
-                            if any(k in feedback for k in
-                                   ["ACCEPT WITH SUGGESTIONS", "REJECT", "REVISIONS RECOMMENDED"]):
-                                flagged_items.append(sec['title'])
-
-                    if flagged_items:
-                        decision = "Accept w/ Suggestions" if audience == "reviewer" else "Revisions Recommended"
-                        notes = f"Issues in: {', '.join(flagged_items)}"
-                    else:
-                        decision = "Accept" if audience == "reviewer" else "Meets Desk Requirements"
-
-            pdf_bytes = backend.create_pdf_report(report_log, filename=generated_slug, audience=audience)
-
-            temp_results.append({
-                'filename': generated_slug,
-                'original_filename': uploaded_file.name,
-                'decision': decision,
-                'notes': notes,
-                'report_text': report_log,
-                'pdf_bytes': pdf_bytes,
-                'first_pass_content': first_pass_content,
-                'saved_tabs_data': saved_tabs_data,
-                'audience': audience
+            # Store results
+            st.session_state.results.append({
+                "filename": uploaded_file.name,
+                "decision": "Accepted/Reviewable" if "ACCEPT" in first_pass_report.upper() else "Desk Reject/Revisions",
+                "pdf_bytes": pdf_bytes,
+                "first_pass_content": first_pass_report,
+                "saved_tabs_data": [{"title": s['title'], "content": batch_feedback.get(s['title'], "")} for s in
+                                    reviewable_sections],
+                "audience": audience
             })
+            status.update(label=f"✅ Finished: {uploaded_file.name}", state="complete")
 
-        except Exception as e:
-            st.error(f"Error processing {uploaded_file.name}: {e}")
-
-        progress_bar.progress((i + 1) / len(uploaded_files))
-
-    st.session_state.results = temp_results
     st.session_state.processing = False
-    st.rerun()
 
 # ==========================================
-# 5. RESULTS & DOWNLOADS
+# 4. RESULTS DISPLAY
 # ==========================================
 if st.session_state.results:
-    st.divider()
-    st.header("📥 Reviews Completed")
-    results = st.session_state.results
+    st.header("📋 Review Summary")
 
-    if len(results) > 1:
-        st.info("📦 **Batch Download Available**")
-        zip_data = create_zip_of_reports(results)
-        st.download_button("⬇️ Download All (.zip)", zip_data, "All_Reviews.zip", "application/zip", type="primary")
-        st.divider()
+    # Batch Download
+    zip_bytes = backend.create_zip(st.session_state.results)
+    st.download_button("📦 Download All Reports (ZIP)", zip_bytes, "Review_Batch.zip", "application/zip")
 
-    for res in results:
-        icon = "✅" if "Accept" in res['decision'] or "Meets" in res['decision'] else "⚠️" if "Suggestions" in res[
-            'decision'] or "Revisions" in res['decision'] else "❌"
-        with st.expander(f"{icon} {res['filename']}  |  Decision: {res['decision']}", expanded=True):
+    for res in st.session_state.results:
+        icon = "✅" if "Accept" in res['decision'] else "❌"
+        with st.expander(f"{icon} {res['filename']} | {res['decision']}"):
             c1, c2 = st.columns([1, 4])
             with c1:
-                audience_str = res.get('audience', 'Reviewer').title()
-                download_filename = f"Report_{audience_str}_{res['filename']}.pdf"
+                st.download_button(f"⬇️ Download PDF", res['pdf_bytes'], f"Report_{res['filename']}.pdf",
+                                   "application/pdf")
 
-                st.download_button("⬇️ Download PDF Report", res['pdf_bytes'], download_filename,
-                                   "application/pdf", type="primary")
             with c2:
-                if res['notes']: st.info(f"**Notes:** {res['notes']}")
+                # Tabbed View: First Pass + Filtered Main Sections
+                tab_titles = ["🔍 First Pass"] + [s['title'] for s in res['saved_tabs_data']]
+                ui_tabs = st.tabs(tab_titles)
 
-            st.divider()
+                with ui_tabs[0]:
+                    st.markdown(res['first_pass_content'])
 
-            saved_sections = res.get('saved_tabs_data', [])
-            first_pass = res.get('first_pass_content', "")
-
-            if saved_sections or first_pass:
-                tab_titles = ["🔍 First Pass"] + [s['title'] for s in saved_sections]
-                result_tabs = st.tabs(tab_titles)
-                with result_tabs[0]:
-                    st.markdown(first_pass if first_pass else "No data.")
-                for i, sec_data in enumerate(saved_sections):
-                    with result_tabs[i + 1]:
+                for i, sec_data in enumerate(res['saved_tabs_data']):
+                    with ui_tabs[i + 1]:
                         st.markdown(sec_data['content'])
-            else:
-                st.text_area("Full Report Log", res['report_text'], height=200)
-
-    st.divider()
-    if st.button("Start New Review"):
-        st.session_state.results = None
-        st.rerun()
