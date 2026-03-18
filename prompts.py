@@ -120,7 +120,7 @@ def get_batch_review_prompt(conference_name, paper_title, sections_info, audienc
     CRITICAL FORMATTING RULES:
     1. PLAIN TEXT ONLY: You must not use any Markdown formatting.
     2. SPELL OUT SYMBOLS: You must spell out all Greek letters and mathematical symbols.
-    3. LIMITATIONS: Maximum 4 bullet points per section. Keep points short and direct.
+    3. LIMITATIONS: Maximum 3 bullet points per section. Keep points short and direct.
     4. XML WRAPPING: You MUST wrap the review for EACH section inside <REVIEW> tags. Provide the exact section title in the attribute.
 
     OUTPUT TEMPLATE (Repeat for EACH section provided):
