@@ -4,7 +4,7 @@ import zipfile
 import io
 import backend
 from dotenv import load_dotenv
-from conference_options import CONFERENCE_OPTIONS  # Imported the new file
+from conference_options import CONFERENCE_OPTIONS
 
 # ==========================================
 # 1. PAGE CONFIG & AUTHENTICATION
@@ -69,7 +69,6 @@ st.title("⚖️ AI Conference Reviewer")
 
 target_conference = "General Academic Standards"
 
-# Replaced the hardcoded list with the imported CONFERENCE_OPTIONS
 selected_option = st.selectbox("Target Conference Track", CONFERENCE_OPTIONS, disabled=st.session_state.processing)
 
 if selected_option == "Custom...":
@@ -96,15 +95,12 @@ if st.session_state.processing and uploaded_files:
     status_text = st.empty()
     temp_results = []
 
-    # We iterate through files
     for i, uploaded_file in enumerate(uploaded_files):
         status_text.text(f"Processing file {i + 1}/{len(uploaded_files)}: {uploaded_file.name}...")
         try:
-            # UI Setup
             file_container = st.expander(f"📄 Processing: {uploaded_file.name}",
                                          expanded=True) if show_details else st.empty()
 
-            # Variables to hold data for the final session state
             saved_tabs_data = []
             first_pass_content = ""
             report_log = ""
@@ -149,23 +145,46 @@ if st.session_state.processing and uploaded_files:
                             notes = "Rejected"
                     if show_details: st.error("❌ Rejected.")
                 else:
-                    # Second Pass
+                    # Second Pass - BATCH PROCESSING
                     report_log += "--- SECTION ANALYSIS ---\n"
                     flagged_items = []
-                    for idx, sec in enumerate(valid_sections):
-                        current_tab = section_tabs[idx] if show_details else st.empty()
-                        with current_tab:
-                            with st.spinner(f"Analyzing {sec['title']}..."):
-                                # ---> THIS IS THE ONLY LINE THAT CHANGED <---
-                                # Added 'target_conference' to pass track criteria to the prompt
-                                feedback = backend.generate_section_review(client, sec['title'], sec['content'],
-                                                                           uploaded_file.name, target_conference)
-                            if feedback:
+
+                    # Grouping Sections into Context Pods
+                    pod1 = []  # Intro, Related, Method
+                    pod2 = []  # Exp, Result, Discussion, Conclusion
+
+                    for sec in valid_sections:
+                        clean_title = sec['title'].upper()
+                        if any(k in clean_title for k in
+                               ["INTRO", "RELATED", "BACKGROUND", "LITERATURE", "METHOD", "APPROACH"]):
+                            pod1.append(sec)
+                        else:
+                            pod2.append(sec)
+
+                    pods = [p for p in [pod1, pod2] if p]
+
+                    for pod in pods:
+                        pod_titles = ", ".join([s['title'] for s in pod])
+
+                        # Send the entire Pod to the AI at once
+                        with st.spinner(f"Reviewing in batch context: {pod_titles}..."):
+                            batch_feedbacks = backend.generate_batch_review(client, pod, uploaded_file.name,
+                                                                            target_conference)
+
+                        # Distribute the parsed feedback back to individual tabs
+                        for sec in pod:
+                            feedback = batch_feedbacks.get(sec['title'], "Review failed or no output generated.")
+
+                            tab_idx = valid_sections.index(sec)
+                            current_tab = section_tabs[tab_idx] if show_details else st.empty()
+                            with current_tab:
                                 st.markdown(feedback)
-                                report_log += f"\n--- SECTION: {sec['title']} ---\n{feedback}\n"
-                                saved_tabs_data.append({"title": sec['title'], "content": feedback})
-                                if "FLAGGED ISSUES" in feedback and "(None)" not in feedback:
-                                    flagged_items.append(sec['title'])
+
+                            report_log += f"\n--- SECTION: {sec['title']} ---\n{feedback}\n"
+                            saved_tabs_data.append({"title": sec['title'], "content": feedback})
+
+                            if "ACCEPT WITH SUGGESTIONS" in feedback or "REJECT" in feedback:
+                                flagged_items.append(sec['title'])
 
                     if flagged_items:
                         decision = "Accept w/ Suggestions"
@@ -173,10 +192,8 @@ if st.session_state.processing and uploaded_files:
                     else:
                         decision = "Accept"
 
-            # Generate PDF (Safe Mode)
             pdf_bytes = backend.create_pdf_report(report_log, filename=uploaded_file.name)
 
-            # Append results safely
             temp_results.append({
                 'filename': uploaded_file.name,
                 'decision': decision,
@@ -192,7 +209,6 @@ if st.session_state.processing and uploaded_files:
 
         progress_bar.progress((i + 1) / len(uploaded_files))
 
-    # SAVE RESULTS AND FINISH
     st.session_state.results = temp_results
     st.session_state.processing = False
     st.rerun()
@@ -223,7 +239,6 @@ if st.session_state.results:
 
             st.divider()
 
-            # REBUILD TABS
             saved_sections = res.get('saved_tabs_data', [])
             first_pass = res.get('first_pass_content', "")
 

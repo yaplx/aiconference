@@ -83,9 +83,6 @@ def combine_section_content(sections):
 
 
 def sanitize_text_for_pdf(text):
-    """
-    Sanitizes text to prevent unicode crashes in standard Arial font.
-    """
     replacements = {
         u'\u2018': "'", u'\u2019': "'", u'\u201c': '"', u'\u201d': '"',
         u'\u2013': '-', u'\u2014': '-', u'\u2212': '-', "**": ""
@@ -161,10 +158,9 @@ def extract_sections_visual(uploaded_file):
 
 
 # ==============================================================================
-# 4. REVIEW LOGIC (GPT-5)
+# 4. REVIEW LOGIC (BATCH XML APPROACH)
 # ==============================================================================
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
-    # Load prompt from prompts.py
     prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
     try:
         response = client.chat.completions.create(
@@ -176,37 +172,64 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
         return f"Error with gpt-5: {str(e)}"
 
 
-# ---> UPDATED THIS FUNCTION TO ACCEPT 'conference_name' <---
-def generate_section_review(client, section_name, section_text, paper_title, conference_name):
-    clean_name = section_name.upper().strip()
-    clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
-    if clean_name in SKIP_REVIEW_SECTIONS or section_name.upper() in SKIP_REVIEW_SECTIONS:
-        return None
+def generate_batch_review(client, sections_list, paper_title, conference_name):
+    """
+    Sends multiple sections to the AI at once for shared context.
+    Parses the returning XML tags to map the feedback back to individual sections.
+    """
+    if not sections_list: return {}
 
-    # Fetch the specific focus instruction from prompts.py
-    section_focus = prompts.get_section_focus(clean_name)
+    sections_info = []
+    for sec in sections_list:
+        clean_name = sec['title'].upper().strip()
+        clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
+        focus = prompts.get_section_focus(clean_name)
+        sections_info.append({
+            "title": sec['title'],
+            "focus": focus,
+            "content": sec['content']
+        })
 
-    # ---> UPDATED TO PASS 'conference_name' <---
-    prompt = prompts.get_section_review_prompt(conference_name, paper_title, section_name, section_focus, section_text)
+    prompt = prompts.get_batch_review_prompt(conference_name, paper_title, sections_info)
 
     try:
         response = client.chat.completions.create(
             model="gpt-5",
             messages=[{"role": "user", "content": prompt}]
         )
-        return response.choices[0].message.content
+        raw_output = response.choices[0].message.content
+
+        # Parse XML tags
+        xml_results = {}
+        pattern = re.compile(r'<REVIEW\s+section=["\']?(.*?)["\']?>(.*?)</REVIEW>', re.IGNORECASE | re.DOTALL)
+        matches = pattern.findall(raw_output)
+
+        for match_title, feedback in matches:
+            xml_results[match_title.strip().upper()] = feedback.strip()
+
+        # Safely map parsed results back to exact section titles
+        final_results = {}
+        for sec in sections_list:
+            title_upper = sec['title'].strip().upper()
+            matched_content = "Status: ACCEPT WITH SUGGESTIONS\n\nFLAGGED ISSUES:\n- AI failed to format this section's review correctly."
+
+            for k in xml_results.keys():
+                if title_upper in k or k in title_upper:
+                    matched_content = xml_results[k]
+                    break
+            final_results[sec['title']] = matched_content
+
+        return final_results
     except Exception as e:
-        return f"Error with gpt-5: {str(e)}"
+        return {sec['title']: f"Error: {str(e)}" for sec in sections_list}
 
 
 # ==============================================================================
-# 5. PDF GENERATION (SIMPLE ARIAL)
+# 5. PDF GENERATION
 # ==============================================================================
 def create_pdf_report(full_report_text, filename="document.pdf"):
     pdf = FPDF()
     pdf.add_page()
-
-    # Use Standard Arial (Built-in to FPDF, no file needed)
     pdf.set_font("Arial", '', 11)
 
     # --- TITLE ---
@@ -217,7 +240,6 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     # --- DISCLAIMER ---
     pdf.set_font("Arial", '', 8)
     pdf.set_text_color(100, 100, 100)
-
     disclaimer_text = (
         "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
         "suggestion based on structural and content analysis."
@@ -233,17 +255,10 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
 
     # --- BODY ---
     pdf.set_font("Arial", '', 12)
-
-    # Sanitize text (Markdown removal etc.)
     clean_text = sanitize_text_for_pdf(full_report_text)
-
     lines = clean_text.split('\n')
     for line in lines:
         safe_line = line.strip()
-
-        # Force Latin-1 encoding.
-        # This replaces any unsupported characters (like Greek letters) with '?'
-        # preventing the "UnicodeEncodeError" that crashes the PDF.
         safe_line = safe_line.encode('latin-1', 'replace').decode('latin-1')
 
         if "DECISION:" in safe_line or "--- SECTION:" in safe_line:
@@ -252,8 +267,6 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
         else:
             pdf.multi_cell(0, 5, safe_line)
 
-    # Return valid PDF bytes
-    # We use 'replace' again during output to be absolutely safe
     return pdf.output(dest="S").encode("latin-1", "replace")
 
 
