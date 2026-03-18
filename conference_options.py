@@ -13,7 +13,7 @@ CONFERENCE_OPTIONS = [
 
 '''
 //update track in conference_option
-Track focus
+//Track focus
 let the report able to directly send back to author.
 cater for line number document
 update disclaimer in another file
