@@ -6,7 +6,9 @@ DISCLAIMERS = {
         "KNOWN LIMITATIONS:\n"
         "1. Figures, tables, and complex diagrams are NOT analyzed by the AI and must be checked manually.\n"
         "2. Deep mathematical proofs and specialized factual claims are not fully verified.\n"
-        "3. Use this as a preliminary screening tool to guide your manual evaluation."
+        "3. Use this as a preliminary screening tool to guide your manual evaluation.\n"
+        "4. This tool expects manuscripts to broadly follow the IMRAD (Introduction, Method, Results, and Discussion) format. "
+        "Deviations from this standard structure may result in parsing errors or incomplete feedback."
     ),
     "author": (
         "DISCLAIMER: This report provides automated preliminary feedback to help you refine "
@@ -15,6 +17,8 @@ DISCLAIMERS = {
         "KNOWN LIMITATIONS:\n"
         "1. Figures, tables, and complex diagrams are NOT analyzed by the AI.\n"
         "2. Deep mathematical proofs and specialized factual claims are not verified.\n"
-        "3. Please use your independent academic judgment when applying this feedback to improve your paper."
+        "3. Please use your independent academic judgment when applying this feedback to improve your paper.\n"
+        "4. This tool expects manuscripts to broadly follow the IMRAD (Introduction, Method, Results, and Discussion) format. "
+        "Deviations from this standard structure may result in parsing errors or incomplete feedback."
     )
 }
