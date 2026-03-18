@@ -156,8 +156,10 @@ if st.session_state.processing and uploaded_files:
                         current_tab = section_tabs[idx] if show_details else st.empty()
                         with current_tab:
                             with st.spinner(f"Analyzing {sec['title']}..."):
+                                # ---> THIS IS THE ONLY LINE THAT CHANGED <---
+                                # Added 'target_conference' to pass track criteria to the prompt
                                 feedback = backend.generate_section_review(client, sec['title'], sec['content'],
-                                                                           uploaded_file.name)
+                                                                           uploaded_file.name, target_conference)
                             if feedback:
                                 st.markdown(feedback)
                                 report_log += f"\n--- SECTION: {sec['title']} ---\n{feedback}\n"
