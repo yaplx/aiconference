@@ -1,63 +1,52 @@
-import document_reader
-import getai
-import report_generator
 import re
 import headers_map as hm
+import getai
+import document_reader
+import report_generator
+import streamlit as st
 
 
-# ==========================================
-# 1. CORE BRIDGE FUNCTIONS (UI calls these)
-# ==========================================
+def process_paper_workflow(client, uploaded_file, conference, audience):
+    """The 'Brain' of the operation: Handles the logic previously clogging up UI.py"""
+    # 1. Extraction
+    sections = document_reader.extract_sections_visual(uploaded_file)
+    full_text = "\n".join([s['content'] for s in sections])
 
-def get_openai_client(api_key):
-    return getai.get_openai_client(api_key)
+    # 2. Filtering
+    valid_sections = [s for s in sections if is_main_body(s['title'])]
 
+    # 3. First Pass
+    first_pass = getai.evaluate_first_pass(client, uploaded_file.name, full_text[:4000], conference, audience)
 
-def extract_sections(uploaded_file):
-    return document_reader.extract_sections_visual(uploaded_file)
+    # 4. Detailed Review (if not rejected)
+    saved_tabs = []
+    if "REJECT" not in first_pass.upper():
+        # Batch review logic remains here, kept away from UI
+        feedback_map = getai.generate_batch_review(client, valid_sections, uploaded_file.name, conference, audience)
+        saved_tabs = [{"title": k, "content": v} for k, v in feedback_map.items()]
 
+    # 5. Generate PDF
+    report_log = f"FIRST PASS:\n{first_pass}\n\n" + "\n".join([f"{t['title']}: {t['content']}" for t in saved_tabs])
+    pdf = report_generator.create_pdf_report(report_log, uploaded_file.name, audience)
 
-def create_pdf(full_report, filename, audience):
-    return report_generator.create_pdf_report(full_report, filename, audience)
-
-
-def create_zip(results_list):
-    return report_generator.create_zip_of_reports(results_list)
-
-
-# ==========================================
-# 2. DATA PROCESSING (The "Tidying" Logic)
-# ==========================================
-
-def filter_reviewable_sections(sections):
-    """
-    Tidies up the UI by removing Front/Back matter
-    and returning only the sections that need AI review.
-    """
-    valid = []
-    for s in sections:
-        clean_title = re.sub(r"^[\d\w]+\.\s*", "", s['title'].upper().strip())
-        mapped = hm.HEADER_MAP.get(clean_title, clean_title)
-
-        if mapped not in hm.FRONT_MATTER and mapped not in hm.BACK_MATTER:
-            valid.append(s)
-    return valid
+    return {
+        "filename": uploaded_file.name,
+        "first_pass_content": first_pass,
+        "saved_tabs_data": saved_tabs,
+        "pdf_bytes": pdf,
+        "decision": "REJECT" if "REJECT" in first_pass.upper() else "PROCEED"
+    }
 
 
-def combine_section_content(sections):
-    """Joins sections into one big string for the first-pass check"""
-    return "\n".join([f"--- {s['title']} ---\n{s['content']}" for s in sections])
+def is_main_body(title):
+    clean = re.sub(r"^[\d\w]+\.\s*", "", title.upper().strip())
+    mapped = hm.HEADER_MAP.get(clean, clean)
+    return mapped not in hm.FRONT_MATTER and mapped not in hm.BACK_MATTER
 
 
-# ==========================================
-# 3. AI ORCHESTRATION
-# ==========================================
-
-def evaluate_first_pass(client, paper_title, abstract_content, conf_choice, audience):
-    # We could add extra logic here to 'clean' the abstract before sending to AI
-    return getai.evaluate_first_pass(client, paper_title, abstract_content, conf_choice, audience)
-
-
-def generate_batch_review(client, sections_list, paper_title, conf_choice, audience):
-    # This calls the complex XML parsing logic inside getai.py
-    return getai.generate_batch_review(client, sections_list, paper_title, conf_choice, audience)
+def render_ui_results(results):
+    """Moves the lengthy 'Results' UI code here to keep UI.py tiny"""
+    for res in results:
+        with st.expander(f"📄 {res['filename']}"):
+            st.write(res['first_pass_content'])
+            # ... additional UI rendering ...
