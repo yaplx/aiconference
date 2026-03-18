@@ -102,3 +102,25 @@ def get_section_focus(clean_name):
     COMMON MISTAKES TO CHECK:
     - Unclear logical flow or poor structural organization.
     - Claims made without adequate citation or evidence."""
+
+def get_track_criteria(conference_name):
+    """
+    Returns specific acceptance criteria based on the selected conference track.
+    """
+    criteria_map = {
+        "C1: AI & Computer Vision - Intelligence Beyond Boundaries":
+            "Look for: Novel neural network architectures, image/video processing, generative AI, object detection, or advanced machine learning methodologies.",
+        "C2: Quantum Frontiers - Computing, Security & Sensing":
+            "Look for: Quantum algorithms, qubit optimization, quantum cryptography (QKD), quantum error correction, or quantum sensors.",
+        "C3: Healthcare & Bio-Intelligence - Future of Medicine":
+            "Look for: Medical imaging analysis, bioinformatics, personalized medicine, clinical AI applications, or smart health wearables.",
+        "C4: Robotics & Autonomous Systems - Machines that Collaborate":
+            "Look for: Kinematics, path planning, human-robot interaction (HRI), autonomous vehicles, drones, or swarm robotics.",
+        "C5: Intelligent Manufacturing & Industry 5.0 - Human-Machine Synergy":
+            "Look for: Digital twins, industrial IoT (IIoT), predictive maintenance, supply chain optimization, or human-in-the-loop production systems.",
+        "C6: Embedded Systems & Edge Intelligence - Real-Time, Low-Power Innovation":
+            "Look for: Microcontrollers, FPGA designs, low-power machine learning (TinyML), real-time operating systems (RTOS), or edge computing.",
+        "C7: Convergence & Society - Ethics, Policy & Global Impact":
+            "Look for: AI ethics, regulatory frameworks, data privacy, algorithmic bias, or socio-economic impacts of emerging technologies."
+    }
+    return criteria_map.get(conference_name, "Ensure the technical content logically aligns with the stated track.")
