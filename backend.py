@@ -6,6 +6,7 @@ from openai import OpenAI
 from fpdf import FPDF
 import prompts
 import headers_map as hm
+from disclaimer import DISCLAIMER_TEXT  # Imported the new disclaimer
 
 # ==============================================================================
 # 1. CONFIGURATION
@@ -254,11 +255,9 @@ def create_pdf_report(full_report_text, filename="document.pdf"):
     # --- DISCLAIMER ---
     pdf.set_font("Arial", '', 8)
     pdf.set_text_color(100, 100, 100)
-    disclaimer_text = (
-        "DISCLAIMER: This is an automated assistant tool. The 'RECOMMENDATION' is a "
-        "suggestion based on structural and content analysis."
-    )
-    pdf.multi_cell(0, 4, txt=disclaimer_text, align='C')
+
+    # Use the imported disclaimer text and align to the Left for readability
+    pdf.multi_cell(0, 4, txt=DISCLAIMER_TEXT, align='L')
     pdf.ln(10)
 
     # --- METADATA ---
