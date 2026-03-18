@@ -118,36 +118,59 @@ def extract_sections_visual(uploaded_file):
 
     i = 0
     while i < len(all_lines):
-        line = all_lines[i]
+        raw_line = all_lines[i]
+
+        # --- 1. Ignore Standalone Line Numbers ---
+        if re.match(r'^\d+$', raw_line):
+            i += 1
+            continue
+
+        # --- 2. Generate Candidate Lines (Raw vs Stripped) ---
+        candidate_lines = [raw_line]
+        strip_match = re.match(r'^\d+\s+(.*)$', raw_line)
+        if strip_match:
+            candidate_lines.append(strip_match.group(1))
+
         detected_header = False
         num_str, phrase, is_numbered = "", "", False
+        skip_next_line = False
 
-        p_num, p_phrase = _parse_header_components(line)
-        if p_num and _is_valid_numbered_header(p_num, p_phrase, expected_number):
-            detected_header = True
-            is_numbered = True
-            num_str = p_num
-            phrase = p_phrase
-        elif not detected_header and i + 1 < len(all_lines):
-            num_match = re.match(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)$", line)
-            if num_match:
-                potential_num = num_match.group(1)
-                next_line = all_lines[i + 1].strip()
-                if len(next_line) < 30 and next_line and next_line[0].isupper():
-                    if _is_valid_numbered_header(potential_num, next_line, expected_number):
-                        detected_header = True
-                        is_numbered = True
-                        num_str = potential_num
-                        phrase = next_line
-                        i += 1
+        for line in candidate_lines:
+            if detected_header: break
 
-        if not detected_header:
-            mapped_title = _get_mapped_title(line)
-            if mapped_title:
+            p_num, p_phrase = _parse_header_components(line)
+            if p_num and _is_valid_numbered_header(p_num, p_phrase, expected_number):
                 detected_header = True
-                is_numbered = False
-                phrase = mapped_title
+                is_numbered = True
+                num_str = p_num
+                phrase = p_phrase
+            elif not detected_header and i + 1 < len(all_lines):
+                num_match = re.match(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)$", line)
+                if num_match:
+                    potential_num = num_match.group(1)
+                    next_line = all_lines[i + 1].strip()
 
+                    # Also strip potential line numbers from split lines
+                    nl_match = re.match(r'^\d+\s+(.*)$', next_line)
+                    if nl_match:
+                        next_line = nl_match.group(1)
+
+                    if len(next_line) < 30 and next_line and next_line[0].isupper():
+                        if _is_valid_numbered_header(potential_num, next_line, expected_number):
+                            detected_header = True
+                            is_numbered = True
+                            num_str = potential_num
+                            phrase = next_line
+                            skip_next_line = True
+
+            if not detected_header:
+                mapped_title = _get_mapped_title(line)
+                if mapped_title:
+                    detected_header = True
+                    is_numbered = False
+                    phrase = mapped_title
+
+        # Protection Layer: Duplicate Prevention ONLY
         if detected_header:
             core_title = _get_mapped_title(phrase)
             if core_title:
@@ -156,6 +179,7 @@ def extract_sections_visual(uploaded_file):
                 else:
                     seen_mapped_titles.add(core_title)
 
+        # Apply Header
         if detected_header:
             if current_section["content"].strip(): sections.append(current_section)
             if is_numbered:
@@ -163,8 +187,13 @@ def extract_sections_visual(uploaded_file):
                 expected_number += 1
             else:
                 current_section = {"title": phrase, "content": ""}
+
+            if skip_next_line:
+                i += 1
         else:
-            current_section["content"] += line + " "
+            # Safely append the raw line to the content block so no data is lost
+            current_section["content"] += raw_line + " "
+
         i += 1
 
     if current_section["content"].strip(): sections.append(current_section)
