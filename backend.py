@@ -106,7 +106,8 @@ def extract_sections_visual(uploaded_file):
     doc.close()
 
     sections = []
-    current_section = {"title": "Preamble/Introduction", "content": ""}
+    # CHANGED THIS LINE:
+    current_section = {"title": "PREAMBLE", "content": ""}
     expected_number = 1
 
     seen_mapped_titles = set()

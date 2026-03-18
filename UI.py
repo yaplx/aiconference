@@ -124,15 +124,20 @@ if st.session_state.processing and uploaded_files:
                 sections = backend.extract_sections_visual(uploaded_file)
                 full_text_clean = backend.combine_section_content(sections)
 
-                # Dynamically filter valid sections using headers_map
                 valid_sections = []
                 for s in sections:
+                    # Clean the title to match our map (remove "1. ", etc.)
                     clean_title = s['title'].upper().strip()
                     clean_title = re.sub(r"^[\d\w]+\.\s*", "", clean_title)
+
+                    # Look up what this section is "mapped" to
                     mapped = hm.HEADER_MAP.get(clean_title, clean_title)
-                    if mapped not in hm.FRONT_MATTER + hm.BACK_MATTER:
+
+                    # RULE: Only allow if it's NOT in Front Matter or Back Matter
+                    if mapped not in hm.FRONT_MATTER and mapped not in hm.BACK_MATTER:
                         valid_sections.append(s)
 
+                # Now tab_names will ONLY contain First Pass + Main Body Sections
                 tab_names = ["🔍 First Pass"] + [s['title'] for s in valid_sections]
 
                 if show_details:
