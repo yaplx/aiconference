@@ -11,10 +11,6 @@ from disclaimer import DISCLAIMERS
 # ==============================================================================
 # 1. CONFIGURATION
 # ==============================================================================
-SKIP_REVIEW_SECTIONS = [
-    "ABSTRACT", "PREAMBLE", "PREAMBLE/INTRODUCTION", "REFERENCES",
-    "BIBLIOGRAPHY", "ACKNOWLEDGMENT", "APPENDIX", "DECLARATION"
-]
 IGNORE_CAPTION_KEYWORDS = [
     "FIGURE", "FIG", "FIG.", "TABLE", "TAB", "TAB.",
     "IMAGE", "IMG", "IMG.", "CHART", "GRAPH", "DIAGRAM", "EQ", "EQUATION"
@@ -94,7 +90,7 @@ def sanitize_text_for_pdf(text):
 
 
 # ==============================================================================
-# 3. EXTRACTION
+# 3. EXTRACTION (Line Cleaner & Zone Lockout Included)
 # ==============================================================================
 def extract_sections_visual(uploaded_file):
     uploaded_file.seek(0)
@@ -114,7 +110,11 @@ def extract_sections_visual(uploaded_file):
     expected_number = 1
 
     seen_mapped_titles = set()
-    FRONT_BACK_MATTER = ["ABSTRACT", "REFERENCES", "ACKNOWLEDGMENT", "APPENDIX", "DECLARATION"]
+    FRONT_BACK_MATTER = hm.FRONT_MATTER + hm.BACK_MATTER
+
+    # State tracking for Zone Lockout
+    in_front_matter = True
+    UNLOCKERS = hm.POD_1  # Introduction, Background, etc. act as unlockers
 
     i = 0
     while i < len(all_lines):
@@ -170,16 +170,27 @@ def extract_sections_visual(uploaded_file):
                     is_numbered = False
                     phrase = mapped_title
 
-        # Protection Layer: Duplicate Prevention ONLY
+        # --- Apply Protections ---
         if detected_header:
             core_title = _get_mapped_title(phrase)
-            if core_title:
+
+            # Zone Lockout Protection (Protects Structured Abstracts)
+            if in_front_matter:
+                # Unlock if we hit an official starting section or any numbered section
+                if is_numbered or (core_title in UNLOCKERS):
+                    in_front_matter = False
+                # If we see standard body headers but are still locked in the abstract, ignore them
+                elif core_title in ["METHOD", "EXPERIMENT", "RESULT", "DISCUSSION", "CONCLUSION"]:
+                    detected_header = False
+
+                    # Duplicate Prevention ONLY
+            if detected_header and core_title:
                 if core_title in seen_mapped_titles and core_title not in FRONT_BACK_MATTER:
                     detected_header = False
                 else:
                     seen_mapped_titles.add(core_title)
 
-        # Apply Header
+        # --- Apply Header ---
         if detected_header:
             if current_section["content"].strip(): sections.append(current_section)
             if is_numbered:
