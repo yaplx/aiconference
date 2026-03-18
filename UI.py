@@ -3,6 +3,7 @@ import os
 import zipfile
 import io
 import backend
+import re  # Added for safe filename cleaning
 from dotenv import load_dotenv
 from conference_options import CONFERENCE_OPTIONS
 
@@ -53,7 +54,9 @@ def create_zip_of_reports(results_list):
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for item in results_list:
-            pdf_name = f"Report_{item['filename']}.pdf"
+            # Dynamically inject the audience and clean SLUG into the zip filenames
+            audience_str = item.get('audience', 'Reviewer').title()
+            pdf_name = f"Report_{audience_str}_{item['filename']}.pdf"
             zip_file.writestr(pdf_name, item['pdf_bytes'])
 
         if results_list and results_list[0].get('decision') != "N/A":
@@ -141,6 +144,16 @@ if st.session_state.processing and uploaded_files:
                     )
                     st.markdown(first_pass_content)
 
+                # --- SLUG EXTRACTION ---
+                # Default to a truncated original name in case the AI fails to generate the slug
+                generated_slug = uploaded_file.name.replace(".pdf", "")[:20].replace(" ", "_")
+                for line in first_pass_content.split('\n'):
+                    if line.strip().startswith("SLUG:"):
+                        raw_slug = line.split("SLUG:")[1].strip()
+                        # Strip out any non-alphanumeric characters to guarantee a safe filename
+                        generated_slug = re.sub(r'[^A-Za-z0-9_-]', '', raw_slug.replace(' ', '_'))
+                        break
+
                 report_log = f"\n\n--- FIRST PASS ---\n{first_pass_content}\n\n"
                 decision = "PROCEED"
                 notes = "Standard review."
@@ -201,16 +214,19 @@ if st.session_state.processing and uploaded_files:
                     else:
                         decision = "Accept" if audience == "reviewer" else "Meets Desk Requirements"
 
-            pdf_bytes = backend.create_pdf_report(report_log, filename=uploaded_file.name, audience=audience)
+            # Pass the clean AI slug into the PDF generator instead of the messy original name
+            pdf_bytes = backend.create_pdf_report(report_log, filename=generated_slug, audience=audience)
 
             temp_results.append({
-                'filename': uploaded_file.name,
+                'filename': generated_slug,  # Used for the final PDF download
+                'original_filename': uploaded_file.name,  # Stored just in case
                 'decision': decision,
                 'notes': notes,
                 'report_text': report_log,
                 'pdf_bytes': pdf_bytes,
                 'first_pass_content': first_pass_content,
-                'saved_tabs_data': saved_tabs_data
+                'saved_tabs_data': saved_tabs_data,
+                'audience': audience
             })
 
         except Exception as e:
@@ -239,10 +255,15 @@ if st.session_state.results:
     for res in results:
         icon = "✅" if "Accept" in res['decision'] or "Meets" in res['decision'] else "⚠️" if "Suggestions" in res[
             'decision'] or "Revisions" in res['decision'] else "❌"
+        # We use the clean slug (res['filename']) in the UI expander title so it looks nice
         with st.expander(f"{icon} {res['filename']}  |  Decision: {res['decision']}", expanded=True):
             c1, c2 = st.columns([1, 4])
             with c1:
-                st.download_button("⬇️ Download PDF Report", res['pdf_bytes'], f"Report_{res['filename']}.pdf",
+                # Dynamically inject the audience and slug into the individual download filename
+                audience_str = res.get('audience', 'Reviewer').title()
+                download_filename = f"Report_{audience_str}_{res['filename']}.pdf"
+
+                st.download_button("⬇️ Download PDF Report", res['pdf_bytes'], download_filename,
                                    "application/pdf", type="primary")
             with c2:
                 if res['notes']: st.info(f"**Notes:** {res['notes']}")

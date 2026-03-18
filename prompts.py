@@ -26,7 +26,7 @@ def get_first_pass_prompt(conference_name, paper_title, abstract_text, audience)
     Paper: "{paper_title}"
     Abstract: "{abstract_text[:4000]}"
 
-    Task: Determine strictly if the paper is RELEVANT to the conference topic.
+    Task: Determine strictly if the paper is RELEVANT to the conference topic, AND generate a concise 3-word filename slug.
 
     **STRICT GUIDELINES:**
     1. **NEUTRALITY:** Maintain a professional and objective tone.
@@ -37,6 +37,8 @@ def get_first_pass_prompt(conference_name, paper_title, abstract_text, audience)
     - Irrelevant: Topic is clearly outside the scope of {conference_name}.
 
     OUTPUT FORMAT:
+    SLUG: [Write exactly 3 words summarizing the paper, separated by underscores. Example: Dexterous_Grasp_RL]
+
     Option 1 (If Irrelevant):
     DECISION: REJECT
     REASON: The paper is not relevant to the conference theme. [Provide brief reasoning].
