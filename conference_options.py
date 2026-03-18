@@ -14,8 +14,8 @@ CONFERENCE_OPTIONS = [
 '''
 //update track in conference_option
 //Track focus
-let the report able to directly send back to author.
+//let the report able to directly send back to author.
 cater for line number document
-update disclaimer in another file
-for the review, maybe combine method and intro, experiment&result&discuss
+//update disclaimer in another file
+//for the review, maybe combine method and intro, experiment&result&discuss
 '''

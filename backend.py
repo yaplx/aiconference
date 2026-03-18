@@ -6,7 +6,7 @@ from openai import OpenAI
 from fpdf import FPDF
 import prompts
 import headers_map as hm
-from disclaimer import DISCLAIMER_TEXT  # Imported the new disclaimer
+from disclaimer import DISCLAIMERS
 
 # ==============================================================================
 # 1. CONFIGURATION
@@ -113,7 +113,6 @@ def extract_sections_visual(uploaded_file):
     current_section = {"title": "Preamble/Introduction", "content": ""}
     expected_number = 1
 
-    # State tracking to prevent duplicate / stray headers
     seen_mapped_titles = set()
     FRONT_BACK_MATTER = ["ABSTRACT", "REFERENCES", "ACKNOWLEDGMENT", "APPENDIX", "DECLARATION"]
 
@@ -123,7 +122,6 @@ def extract_sections_visual(uploaded_file):
         detected_header = False
         num_str, phrase, is_numbered = "", "", False
 
-        # Check for standard numbered header (e.g. "4. EXPERIMENT")
         p_num, p_phrase = _parse_header_components(line)
         if p_num and _is_valid_numbered_header(p_num, p_phrase, expected_number):
             detected_header = True
@@ -131,7 +129,6 @@ def extract_sections_visual(uploaded_file):
             num_str = p_num
             phrase = p_phrase
         elif not detected_header and i + 1 < len(all_lines):
-            # Check for split line numbered headers
             num_match = re.match(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)$", line)
             if num_match:
                 potential_num = num_match.group(1)
@@ -144,7 +141,6 @@ def extract_sections_visual(uploaded_file):
                         phrase = next_line
                         i += 1
 
-        # Check for unnumbered headers (e.g. "ABSTRACT")
         if not detected_header:
             mapped_title = _get_mapped_title(line)
             if mapped_title:
@@ -152,17 +148,14 @@ def extract_sections_visual(uploaded_file):
                 is_numbered = False
                 phrase = mapped_title
 
-        # Protection Layer: Duplicate Prevention ONLY
         if detected_header:
             core_title = _get_mapped_title(phrase)
             if core_title:
-                # If we've already processed this concept (e.g. Experiment) and it's not an Appendix/Ref, ignore it
                 if core_title in seen_mapped_titles and core_title not in FRONT_BACK_MATTER:
                     detected_header = False
                 else:
                     seen_mapped_titles.add(core_title)
 
-        # Apply Header
         if detected_header:
             if current_section["content"].strip(): sections.append(current_section)
             if is_numbered:
@@ -181,8 +174,8 @@ def extract_sections_visual(uploaded_file):
 # ==============================================================================
 # 4. REVIEW LOGIC (BATCH XML APPROACH)
 # ==============================================================================
-def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
-    prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text)
+def evaluate_first_pass(client, paper_title, abstract_text, conference_name, audience):
+    prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text, audience)
     try:
         response = client.chat.completions.create(
             model="gpt-5",
@@ -193,21 +186,21 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
         return f"Error with gpt-5: {str(e)}"
 
 
-def generate_batch_review(client, sections_list, paper_title, conference_name):
+def generate_batch_review(client, sections_list, paper_title, conference_name, audience):
     if not sections_list: return {}
 
     sections_info = []
     for sec in sections_list:
         clean_name = sec['title'].upper().strip()
         clean_name = re.sub(r"^[\d\w]+\.\s*", "", clean_name)
-        focus = prompts.get_section_focus(clean_name)
+        focus = prompts.get_section_focus(clean_name, audience)
         sections_info.append({
             "title": sec['title'],
             "focus": focus,
             "content": sec['content']
         })
 
-    prompt = prompts.get_batch_review_prompt(conference_name, paper_title, sections_info)
+    prompt = prompts.get_batch_review_prompt(conference_name, paper_title, sections_info, audience)
 
     try:
         response = client.chat.completions.create(
@@ -242,22 +235,21 @@ def generate_batch_review(client, sections_list, paper_title, conference_name):
 # ==============================================================================
 # 5. PDF GENERATION
 # ==============================================================================
-def create_pdf_report(full_report_text, filename="document.pdf"):
+def create_pdf_report(full_report_text, filename="document.pdf", audience="reviewer"):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", '', 11)
 
     # --- TITLE ---
-    pdf.set_font("Arial", '', 16)
-    pdf.cell(0, 10, txt="AI Paper Improvement Report", ln=True, align='C')
+    pdf.set_font("Arial", 'B', 16)
+    title_text = "AI Paper Desk Review (Internal)" if audience == "reviewer" else "AI Paper Feedback Report (Author)"
+    pdf.cell(0, 10, txt=title_text, ln=True, align='C')
     pdf.ln(3)
 
     # --- DISCLAIMER ---
     pdf.set_font("Arial", '', 8)
     pdf.set_text_color(100, 100, 100)
-
-    # Use the imported disclaimer text and align to the Left for readability
-    pdf.multi_cell(0, 4, txt=DISCLAIMER_TEXT, align='L')
+    pdf.multi_cell(0, 4, txt=DISCLAIMERS[audience], align='L')
     pdf.ln(10)
 
     # --- METADATA ---

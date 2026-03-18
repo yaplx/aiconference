@@ -67,15 +67,24 @@ def create_zip_of_reports(results_list):
 # ==========================================
 st.title("⚖️ AI Conference Reviewer")
 
-target_conference = "General Academic Standards"
+c1, c2 = st.columns(2)
+with c1:
+    target_conference = "General Academic Standards"
+    selected_option = st.selectbox("Target Conference Track", CONFERENCE_OPTIONS, disabled=st.session_state.processing)
 
-selected_option = st.selectbox("Target Conference Track", CONFERENCE_OPTIONS, disabled=st.session_state.processing)
+    if selected_option == "Custom...":
+        user_custom = st.text_input("Enter Conference Name:", disabled=st.session_state.processing)
+        if user_custom.strip(): target_conference = user_custom
+    elif selected_option != "General Quality Check":
+        target_conference = selected_option
 
-if selected_option == "Custom...":
-    user_custom = st.text_input("Enter Conference Name:", disabled=st.session_state.processing)
-    if user_custom.strip(): target_conference = user_custom
-elif selected_option != "General Quality Check":
-    target_conference = selected_option
+with c2:
+    audience_selection = st.radio(
+        "Generate Report For:",
+        ["Internal Review Committee (Flags flaws)", "Paper Authors (Constructive feedback)"],
+        disabled=st.session_state.processing
+    )
+    audience = "author" if "Authors" in audience_selection else "reviewer"
 
 uploaded_files = st.file_uploader("Upload PDF(s)", type="pdf", accept_multiple_files=True,
                                   disabled=st.session_state.processing)
@@ -126,9 +135,10 @@ if st.session_state.processing and uploaded_files:
 
                 # First Pass
                 with first_pass_tab:
-                    st.info("Analyzing Abstract...")
-                    first_pass_content = backend.evaluate_first_pass(client, uploaded_file.name, full_text_clean[:4000],
-                                                                     target_conference)
+                    st.info(f"Analyzing Abstract (Mode: {audience.title()})...")
+                    first_pass_content = backend.evaluate_first_pass(
+                        client, uploaded_file.name, full_text_clean[:4000], target_conference, audience
+                    )
                     st.markdown(first_pass_content)
 
                 report_log = f"\n\n--- FIRST PASS ---\n{first_pass_content}\n\n"
@@ -149,7 +159,6 @@ if st.session_state.processing and uploaded_files:
                     report_log += "--- SECTION ANALYSIS ---\n"
                     flagged_items = []
 
-                    # Grouping Sections into Context Pods
                     pod1 = []  # Intro, Related, Method
                     pod2 = []  # Exp, Result, Discussion, Conclusion
 
@@ -166,12 +175,11 @@ if st.session_state.processing and uploaded_files:
                     for pod in pods:
                         pod_titles = ", ".join([s['title'] for s in pod])
 
-                        # Send the entire Pod to the AI at once
                         with st.spinner(f"Reviewing in batch context: {pod_titles}..."):
-                            batch_feedbacks = backend.generate_batch_review(client, pod, uploaded_file.name,
-                                                                            target_conference)
+                            batch_feedbacks = backend.generate_batch_review(
+                                client, pod, uploaded_file.name, target_conference, audience
+                            )
 
-                        # Distribute the parsed feedback back to individual tabs
                         for sec in pod:
                             feedback = batch_feedbacks.get(sec['title'], "Review failed or no output generated.")
 
@@ -183,16 +191,17 @@ if st.session_state.processing and uploaded_files:
                             report_log += f"\n--- SECTION: {sec['title']} ---\n{feedback}\n"
                             saved_tabs_data.append({"title": sec['title'], "content": feedback})
 
-                            if "ACCEPT WITH SUGGESTIONS" in feedback or "REJECT" in feedback:
+                            if any(k in feedback for k in
+                                   ["ACCEPT WITH SUGGESTIONS", "REJECT", "REVISIONS RECOMMENDED"]):
                                 flagged_items.append(sec['title'])
 
                     if flagged_items:
-                        decision = "Accept w/ Suggestions"
+                        decision = "Accept w/ Suggestions" if audience == "reviewer" else "Revisions Recommended"
                         notes = f"Issues in: {', '.join(flagged_items)}"
                     else:
-                        decision = "Accept"
+                        decision = "Accept" if audience == "reviewer" else "Meets Desk Requirements"
 
-            pdf_bytes = backend.create_pdf_report(report_log, filename=uploaded_file.name)
+            pdf_bytes = backend.create_pdf_report(report_log, filename=uploaded_file.name, audience=audience)
 
             temp_results.append({
                 'filename': uploaded_file.name,
@@ -228,7 +237,8 @@ if st.session_state.results:
         st.divider()
 
     for res in results:
-        icon = "✅" if res['decision'] == "Accept" else "⚠️" if "Suggestions" in res['decision'] else "❌"
+        icon = "✅" if "Accept" in res['decision'] or "Meets" in res['decision'] else "⚠️" if "Suggestions" in res[
+            'decision'] or "Revisions" in res['decision'] else "❌"
         with st.expander(f"{icon} {res['filename']}  |  Decision: {res['decision']}", expanded=True):
             c1, c2 = st.columns([1, 4])
             with c1:
