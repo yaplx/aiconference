@@ -111,12 +111,18 @@ def extract_sections_visual(uploaded_file):
     sections = []
     current_section = {"title": "Preamble/Introduction", "content": ""}
     expected_number = 1
+
+    # State tracking to prevent duplicate / stray headers
+    seen_mapped_titles = set()
+    FRONT_BACK_MATTER = ["ABSTRACT", "REFERENCES", "ACKNOWLEDGMENT", "APPENDIX", "DECLARATION"]
+
     i = 0
     while i < len(all_lines):
         line = all_lines[i]
         detected_header = False
         num_str, phrase, is_numbered = "", "", False
 
+        # Check for standard numbered header (e.g. "4. EXPERIMENT")
         p_num, p_phrase = _parse_header_components(line)
         if p_num and _is_valid_numbered_header(p_num, p_phrase, expected_number):
             detected_header = True
@@ -124,6 +130,7 @@ def extract_sections_visual(uploaded_file):
             num_str = p_num
             phrase = p_phrase
         elif not detected_header and i + 1 < len(all_lines):
+            # Check for split line numbered headers
             num_match = re.match(r"^([IVXLCDMivxlcdm]+|\d+)(\.?)$", line)
             if num_match:
                 potential_num = num_match.group(1)
@@ -136,6 +143,7 @@ def extract_sections_visual(uploaded_file):
                         phrase = next_line
                         i += 1
 
+        # Check for unnumbered headers (e.g. "ABSTRACT")
         if not detected_header:
             mapped_title = _get_mapped_title(line)
             if mapped_title:
@@ -143,6 +151,17 @@ def extract_sections_visual(uploaded_file):
                 is_numbered = False
                 phrase = mapped_title
 
+        # Protection Layer: Duplicate Prevention ONLY
+        if detected_header:
+            core_title = _get_mapped_title(phrase)
+            if core_title:
+                # If we've already processed this concept (e.g. Experiment) and it's not an Appendix/Ref, ignore it
+                if core_title in seen_mapped_titles and core_title not in FRONT_BACK_MATTER:
+                    detected_header = False
+                else:
+                    seen_mapped_titles.add(core_title)
+
+        # Apply Header
         if detected_header:
             if current_section["content"].strip(): sections.append(current_section)
             if is_numbered:
@@ -153,6 +172,7 @@ def extract_sections_visual(uploaded_file):
         else:
             current_section["content"] += line + " "
         i += 1
+
     if current_section["content"].strip(): sections.append(current_section)
     return sections
 
@@ -173,10 +193,6 @@ def evaluate_first_pass(client, paper_title, abstract_text, conference_name):
 
 
 def generate_batch_review(client, sections_list, paper_title, conference_name):
-    """
-    Sends multiple sections to the AI at once for shared context.
-    Parses the returning XML tags to map the feedback back to individual sections.
-    """
     if not sections_list: return {}
 
     sections_info = []
@@ -199,7 +215,6 @@ def generate_batch_review(client, sections_list, paper_title, conference_name):
         )
         raw_output = response.choices[0].message.content
 
-        # Parse XML tags
         xml_results = {}
         pattern = re.compile(r'<REVIEW\s+section=["\']?(.*?)["\']?>(.*?)</REVIEW>', re.IGNORECASE | re.DOTALL)
         matches = pattern.findall(raw_output)
@@ -207,7 +222,6 @@ def generate_batch_review(client, sections_list, paper_title, conference_name):
         for match_title, feedback in matches:
             xml_results[match_title.strip().upper()] = feedback.strip()
 
-        # Safely map parsed results back to exact section titles
         final_results = {}
         for sec in sections_list:
             title_upper = sec['title'].strip().upper()
