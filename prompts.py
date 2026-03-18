@@ -48,21 +48,21 @@ def get_first_pass_prompt(conference_name, paper_title, abstract_text, audience)
 
 def get_section_focus(clean_name, audience):
     if audience == "reviewer":
-        header = "COMMON MISTAKES TO CHECK:"
-        method_focus = "- Lack of reproducibility details.\n- Mathematical unsoundness.\n- Unclear algorithm steps."
-        result_focus = "- Unfair or missing baselines.\n- Lack of statistical significance.\n- Exaggerated claims."
-        intro_focus = "- Failing to identify the exact research gap.\n- Missing explicit contributions."
-        related_focus = "- Missing recent state-of-the-art works (last 3 years).\n- Merely listing papers without contrasting."
-        discuss_focus = "- Making sweeping claims not supported by data.\n- Ignoring limitations."
-        default_focus = "- Unclear logical flow.\n- Claims without citation."
+        header = "CRITICAL FLAWS TO CHECK FOR:"
+        method_focus = "- Complete lack of reproducibility details.\n- Severe mathematical unsoundness.\n- Highly unclear algorithm steps."
+        result_focus = "- Unfair or completely missing baselines.\n- Total lack of statistical significance.\n- Highly exaggerated claims."
+        intro_focus = "- Failing to identify any clear research gap.\n- Missing explicit contributions."
+        related_focus = "- Missing recent state-of-the-art works (last 3 years).\n- Merely listing papers without any contrasting."
+        discuss_focus = "- Making sweeping claims completely unsupported by data.\n- Entirely ignoring limitations."
+        default_focus = "- Highly unclear logical flow.\n- Major claims without citation."
     else:
-        header = "AREAS FOR CONSTRUCTIVE FEEDBACK:"
-        method_focus = "- Advise adding missing reproducibility details (parameters, dataset specs).\n- Point out undefined variables or equations.\n- Suggest clarifying algorithm steps or adding pseudocode."
-        result_focus = "- Suggest adding baselines if missing.\n- Recommend adding statistical significance or error metrics.\n- Advise toning down exaggerated claims to match the data."
-        intro_focus = "- Recommend clarifying the exact research gap.\n- Suggest making contribution statements more explicit."
-        related_focus = "- Advise including more recent state-of-the-art works.\n- Suggest explicitly contrasting existing works with the proposed method."
-        discuss_focus = "- Advise narrowing claims to strictly what the experiments support.\n- Suggest explicitly discussing the limitations of the method."
-        default_focus = "- Suggest improvements for logical flow.\n- Point out claims that need proper citations."
+        header = "AREAS FOR CONSTRUCTIVE FEEDBACK (IF UNCLEAR):"
+        method_focus = "- Advise adding missing reproducibility details (parameters, dataset specs).\n- Point out highly undefined variables or equations.\n- Suggest clarifying algorithm steps if very unclear."
+        result_focus = "- Suggest adding baselines if completely missing.\n- Recommend adding statistical significance if lacking.\n- Advise toning down exaggerated claims."
+        intro_focus = "- Recommend clarifying the research gap if vague.\n- Suggest making contribution statements more explicit."
+        related_focus = "- Advise including more recent state-of-the-art works if omitted.\n- Suggest explicitly contrasting existing works."
+        discuss_focus = "- Advise narrowing claims if unsupported by experiments.\n- Suggest explicitly discussing limitations if ignored."
+        default_focus = "- Suggest improvements if logical flow is very poor.\n- Point out major claims that need citations."
 
     if "METHOD" in clean_name:
         return f"Focus: Reproducibility and mathematical soundness.\n{header}\n{method_focus}"
@@ -89,12 +89,12 @@ def get_batch_review_prompt(conference_name, paper_title, sections_info, audienc
         persona = "strict, objective conference reviewer assistant."
         status_options = "[ACCEPT / ACCEPT WITH SUGGESTIONS]"
         issues_header = "FLAGGED ISSUES:"
-        approval_rule = "If a section does NOT exhibit the common mistakes, you MUST approve it without suggestions."
+        approval_rule = "DO NOT NITPICK. If the section is generally acceptable and has no major flaws, you MUST approve it without suggestions. ONLY flag issues if the content is fundamentally unacceptable, missing critical components, or very unclear."
     else:
         persona = "constructive, professional peer reviewer speaking directly to the paper's author."
         status_options = "[MEETS DESK REQUIREMENTS / REVISIONS RECOMMENDED]"
         issues_header = "SUGGESTED REVISIONS:"
-        approval_rule = "If a section is strong and requires no major revisions, you MUST approve it without suggestions. Address the author directly (e.g., 'Consider adding...')."
+        approval_rule = "DO NOT NITPICK. If the section is acceptable, you MUST approve it without suggestions. ONLY provide feedback if the content is fundamentally unacceptable, missing critical components, or very unclear. Address the author directly (e.g., 'Consider adding...')."
 
     return f"""
     SYSTEM ROLE:
