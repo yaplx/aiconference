@@ -87,16 +87,17 @@ def get_batch_review_prompt(conference_name, paper_title, sections_info, audienc
     for sec in sections_info:
         compiled_sections += f"\n\n====================\nSECTION TITLE: {sec['title']}\nSECTION FOCUS:\n{sec['focus']}\n\nTEXT:\n{sec['content'][:15000]}\n====================\n"
 
+    # UPDATED: Enforcing the 1-point pod minimum while retaining "do not nitpick" and max 3 per section
     if audience == "reviewer":
         persona = "strict, objective conference reviewer assistant."
         status_options = "[ACCEPT / ACCEPT WITH SUGGESTIONS]"
         issues_header = "FLAGGED ISSUES:"
-        approval_rule = "DO NOT NITPICK. If the section is generally acceptable and has no major flaws, you MUST approve it without suggestions. ONLY flag issues if the content is fundamentally unacceptable, missing critical components, or very unclear."
+        approval_rule = "DO NOT NITPICK. However, you MUST flag a MINIMUM of 1 significant issue or area for improvement across the ENTIRE batch of sections provided below. Find the weakest aspect to help the committee. Do not exceed 3 bullet points for any single section."
     else:
         persona = "constructive, professional peer reviewer speaking directly to the paper's author."
         status_options = "[MEETS DESK REQUIREMENTS / REVISIONS RECOMMENDED]"
         issues_header = "SUGGESTED REVISIONS:"
-        approval_rule = "DO NOT NITPICK. If the section is acceptable, you MUST approve it without suggestions. ONLY provide feedback if the content is fundamentally unacceptable, missing critical components, or very unclear. Address the author directly (e.g., 'Consider adding...')."
+        approval_rule = "DO NOT NITPICK. However, you MUST provide a MINIMUM of 1 constructive suggestion for improvement across the ENTIRE batch of sections provided below. Find the weakest area to help the author refine their work. Address the author directly (e.g., 'Consider adding...'). Do not exceed 3 bullet points for any single section."
 
     return f"""
     SYSTEM ROLE:
@@ -120,7 +121,7 @@ def get_batch_review_prompt(conference_name, paper_title, sections_info, audienc
     CRITICAL FORMATTING RULES:
     1. PLAIN TEXT ONLY: You must not use any Markdown formatting.
     2. SPELL OUT SYMBOLS: You must spell out all Greek letters and mathematical symbols.
-    3. LIMITATIONS: Maximum 3 bullet points per section. Keep points short and direct.
+    3. FEEDBACK QUOTAS: You MUST provide a minimum of 1 total bullet point across ALL sections in this prompt. Maximum 3 bullet points per single section. Distribute your feedback to the section(s) that need it most.
     4. XML WRAPPING: You MUST wrap the review for EACH section inside <REVIEW> tags. Provide the exact section title in the attribute.
 
     OUTPUT TEMPLATE (Repeat for EACH section provided):
