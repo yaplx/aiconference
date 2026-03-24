@@ -130,7 +130,7 @@ if st.session_state.processing and uploaded_files:
 
                 # --- Step 4: Decision & Detailed Review ---
                 generated_slug = uploaded_file.name.replace(".pdf", "")[:20].replace(" ", "_")
-                report_log = f"\n\n--- FIRST PASS ---\n{first_pass_content}\n\n"
+                report_log = f"CONFERENCE TRACK: {target_conference}\n\n--- FIRST PASS ---\n{first_pass_content}\n\n"
                 saved_tabs_data = []
                 flagged_items = []
 
