@@ -9,7 +9,7 @@ def get_openai_client(api_key):
 
 def evaluate_first_pass(client, paper_title, abstract_text, conference_name, audience):
     prompt = prompts.get_first_pass_prompt(conference_name, paper_title, abstract_text, audience)
-    response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
+    response = client.chat.completions.create(model="gpt-5", messages=[{"role": "user", "content": prompt}])
     return response.choices[0].message.content
 
 
@@ -22,7 +22,7 @@ def generate_batch_review(client, sections_list, paper_title, conference_name, a
         sections_info.append({"title": sec['title'], "focus": focus, "content": sec['content']})
 
     prompt = prompts.get_batch_review_prompt(conference_name, paper_title, sections_info, audience)
-    response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
+    response = client.chat.completions.create(model="gpt-5", messages=[{"role": "user", "content": prompt}])
     raw_output = response.choices[0].message.content
 
     xml_results = {}
