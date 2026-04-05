@@ -19,10 +19,9 @@ def get_track_criteria(conference_name):
 
 
 def get_first_pass_prompt(conference_name, paper_title, abstract_text, audience):
-    persona = "strict, objective reviewer assistant reporting to the committee" if audience == "reviewer" else "constructive peer reviewer addressing the author"
 
     return f"""
-    You are a {persona} for the conference: "{conference_name}".
+    You are a strict, objective reviewer assistant reporting to the committee for the conference: "{conference_name}".
     Paper: "{paper_title}"
     Abstract: "{abstract_text[:4000]}"
 
